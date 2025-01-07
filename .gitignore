@@ -1,1 +1,5 @@
+<<<<<<< HEAD
+=======
+Cargo.lock
+>>>>>>> 51ee8dd (feat: setup repo, add action script to compile rust on main)
 /target
