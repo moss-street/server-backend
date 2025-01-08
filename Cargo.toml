@@ -3,4 +3,21 @@ name = "server-backend"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "moss_street_libs"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[[bin]]
+name = "backend"
+path = "src/bin/main.rs"
+
+[dependencies.rusqlite]
+version = "0.32.0"
+features = ["bundled"]
+
+
 [dependencies]
+anyhow = "1.0.95"
+async-trait = "0.1.85"
+tokio = {version = "1.42.0", features = ["full"]}
