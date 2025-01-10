@@ -1,5 +1,8 @@
 use anyhow::Result;
-use moss_street_libs::db::{DBManager, DatabaseImpl};
+use moss_street_libs::{
+    db::{DBManager, DatabaseImpl},
+    server::Server,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -8,8 +11,11 @@ async fn main() -> Result<()> {
 
     dbmanager.create_table("users").await?;
 
-    dbmanager.load_data_to_db("users", "lantz").await?;
+    let ip = "127.0.0.1:6969";
+    let addr = ip.parse()?;
 
-    println!("Hello, world!");
+    let _ = Server::new(addr, dbmanager).await;
+    loop {}
+
     Ok(())
 }

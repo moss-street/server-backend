@@ -53,6 +53,7 @@ impl DatabaseImpl for DBManager {
     }
 }
 
+#[derive(Debug)]
 pub struct DBManager {
     pub connection: Connection,
 }
