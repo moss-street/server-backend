@@ -28,3 +28,5 @@ tower-http = "0.6.2"
 tonic-web = "0.12.3"
 prost-types = "0.13.4"
 moss-street-api-models = { git = "https://github.com/moss-street/api-models/", version = "0.1.0" }
+r2d2_sqlite = "0.25.0"
+r2d2 = "0.8.10"
