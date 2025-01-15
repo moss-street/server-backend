@@ -1,21 +1,26 @@
 use anyhow::Result;
-use moss_street_libs::{
-    db::{DBManager, DatabaseImpl},
-    server::Server,
-};
+use moss_street_libs::server::{dependencies::ServerDependencies, server::Server};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let connection = rusqlite::Connection::open("database.db")?;
-    let dbmanager = DBManager::new(connection);
+    let manager = SqliteConnectionManager::file("local.db");
+    let pool = Pool::new(manager)?;
 
-    dbmanager.create_table("users").await?;
+    let dependencies = ServerDependencies::new(pool);
 
     let ip = "127.0.0.1:6969";
     let addr = ip.parse()?;
 
-    let _ = Server::new(addr, dbmanager).await;
-    loop {}
+    let server = Server::new(addr, dependencies).await;
+    async move {
+        let _ = server
+            .server_handle
+            .await
+            .expect("Server handle paniced! Closing server");
+    }
+    .await;
 
     Ok(())
 }

@@ -26,9 +26,7 @@ prost = "0.13.4"
 tonic-reflection = "0.12.3"
 tower-http = "0.6.2"
 tonic-web = "0.12.3"
-moss-street-api-models = { git = "https://github.com/moss-street/api-models", version = "0.1.0" }
 prost-types = "0.13.4"
-
-[build-dependencies]
-tonic-build = "0.12.3"
-anyhow = "1.0.95"
+moss-street-api-models = { git = "https://github.com/moss-street/api-models/", version = "0.1.0" , branch = "export-fix/1/build-target"}
+r2d2_sqlite = "0.25.0"
+r2d2 = "0.8.10"
