@@ -1,5 +1,6 @@
 use anyhow::Result;
 use moss_street_libs::server::{dependencies::ServerDependencies, server::Server};
+
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 
@@ -21,6 +22,9 @@ async fn main() -> Result<()> {
             .expect("Server handle paniced! Closing server");
     }
     .await;
+
+
+
 
     Ok(())
 }
