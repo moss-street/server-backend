@@ -11,6 +11,12 @@ use tonic::Request;
 #[derive(Default)]
 pub struct AuthService;
 
+impl AuthService {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 #[tonic::async_trait]
 impl AuthorizationService for AuthService {
     async fn create_user(

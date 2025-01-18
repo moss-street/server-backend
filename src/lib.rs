@@ -1,3 +1,3 @@
 pub mod db;
-pub mod server;
+pub mod http;
 pub(crate) mod services;
