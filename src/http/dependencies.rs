@@ -1,4 +1,3 @@
-use anyhow::Result;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 

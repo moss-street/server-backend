@@ -9,14 +9,13 @@ use crate::services::auth::AuthService;
 use super::dependencies::ServerDependencies;
 
 pub struct Server {
-    addr: SocketAddr,
-    dependencies: Arc<ServerDependencies>,
+    _dependencies: Arc<ServerDependencies>,
     pub server_handle: tokio::task::JoinHandle<()>,
 }
 
 impl Server {
     pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
-        let auth_service = AuthService::default();
+        let auth_service = AuthService::new();
 
         let service = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(common::FILE_DESCRIPTOR_SET)
@@ -24,7 +23,6 @@ impl Server {
             .expect("Failed to create tonic reflecion");
 
         let handle = tokio::task::spawn({
-            let addr = addr.clone();
             async move {
                 tonic::transport::Server::builder()
                     .add_service(service)
@@ -38,8 +36,7 @@ impl Server {
         let dependencies = Arc::new(dependencies);
 
         Server {
-            addr,
-            dependencies,
+            _dependencies: dependencies,
             server_handle: handle,
         }
     }

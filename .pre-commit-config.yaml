@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      # Hook for Clippy linting
+      - id: cargo-clippy
+        name: Cargo Clippy
+        entry: bash -c "cargo clippy -- -D warnings"
+        language: system
+        types: [rust]
+
+      # Hook for enforcing nightly formatting
+      - id: cargo-fmt
+        name: Cargo Nightly Fmt
+        entry: bash -c "cargo +nightly fmt -- --check"
+        language: system
+        types: [rust]

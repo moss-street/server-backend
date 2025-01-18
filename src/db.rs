@@ -1,4 +1,4 @@
-use super::server::dependencies::ServerDependencies;
+use crate::http::dependencies::ServerDependencies;
 use anyhow::anyhow;
 use anyhow::Ok;
 use anyhow::Result;
@@ -31,10 +31,8 @@ impl DBManager {
 //     return manager.db_lookup::<Stock>(id).await
 // }
 
-
 #[async_trait]
 impl DatabaseImpl for DBManager {
-    
     async fn execute_db_query(&self, query: String) -> Result<()> {
         if let Some(conn) = self.dependencies.get_connection() {
             conn.execute(query.as_str(), params![])?; // Execute the query
@@ -52,28 +50,31 @@ impl DatabaseImpl for DBManager {
 
     async fn db_lookup<T: TableImpl + Send>(&self, id: i32) -> Result<T> {
         if let Some(conn) = self.dependencies.get_connection() {
-            let result: std::result::Result<T, _> = conn
-                .query_row(T::generate_db_lookup_query(id).as_str(), [], T::deserialize_query_result);
+            let result: std::result::Result<T, _> = conn.query_row(
+                T::generate_db_lookup_query(id).as_str(),
+                [],
+                T::deserialize_query_result,
+            );
             Ok(result?)
         } else {
             Err(anyhow!("No available connection compadre"))
         }
     }
-
-
 }
 
 pub trait TableImpl {
     fn generate_db_load_query(&self) -> String;
     fn generate_db_lookup_query(id: i32) -> String;
-    fn deserialize_query_result(result : &Row) -> Result<Self, rusqlite::Error> where Self: Sized;
+    fn deserialize_query_result(result: &Row) -> Result<Self, rusqlite::Error>
+    where
+        Self: Sized;
 }
 
 #[derive(Debug)]
 pub struct User {
     id: i32,
     email: String,
-    created_at: String, // Using String for simplicity, or use a DateTime library
+    created_at: String,
 }
 
 impl TableImpl for User {
@@ -81,20 +82,21 @@ impl TableImpl for User {
         format!(
             "INSERT INTO users (id, email, created_at) VALUES ({}, '{}', '{}')",
             self.id,
-            self.email.replace("'", "''"), // Escape single quotes
+            self.email.replace('\'', "''"), // Escape single quotes
             self.created_at
         )
     }
 
-    fn generate_db_lookup_query(id: i32) -> String {
+    fn generate_db_lookup_query(_id: i32) -> String {
         todo!()
     }
 
-    fn deserialize_query_result(result : &Row) -> Result<Self, rusqlite::Error>{
+    fn deserialize_query_result(_result: &Row) -> Result<Self, rusqlite::Error> {
         todo!()
     }
 }
 
+#[allow(unused)]
 pub struct Stock {
     id: i32,
     name: String,
@@ -105,11 +107,11 @@ impl TableImpl for Stock {
         todo!()
     }
 
-    fn generate_db_lookup_query(id: i32) -> String {
+    fn generate_db_lookup_query(_id: i32) -> String {
         todo!()
     }
 
-    fn deserialize_query_result(result : &Row) -> Result<Self, rusqlite::Error>{
+    fn deserialize_query_result(_result: &Row) -> Result<Self, rusqlite::Error> {
         todo!()
     }
 }
