@@ -1,15 +1,14 @@
-use r2d2::{Pool, PooledConnection};
-use r2d2_sqlite::SqliteConnectionManager;
+use std::sync::Arc;
 
+use crate::db::manager::DBManager;
+
+#[derive(Debug)]
 pub struct ServerDependencies {
-    db_pool: Pool<SqliteConnectionManager>,
+    pub db_manager: Arc<DBManager>,
 }
 
 impl ServerDependencies {
-    pub fn new(db_pool: Pool<SqliteConnectionManager>) -> Self {
-        Self { db_pool }
-    }
-    pub fn get_connection(&self) -> Option<PooledConnection<SqliteConnectionManager>> {
-        self.db_pool.try_get()
+    pub fn new(db_manager: Arc<DBManager>) -> Self {
+        Self { db_manager }
     }
 }

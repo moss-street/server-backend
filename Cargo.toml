@@ -30,3 +30,5 @@ prost-types = "0.13.4"
 moss-street-api-models = { git = "https://github.com/moss-street/api-models/", version = "0.1.0" }
 r2d2_sqlite = "0.25.0"
 r2d2 = "0.8.10"
+derive_builder = "0.20.2"
+bcrypt = "0.16.0"
