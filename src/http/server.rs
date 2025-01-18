@@ -2,20 +2,36 @@ use rust_models::common;
 
 use common::authorization_service_server::AuthorizationServiceServer;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
-use crate::services::auth::AuthService;
+use crate::{
+    db::{
+        manager::DatabaseImpl,
+        schemas::{stock::Stock, user::User},
+    },
+    services::auth::AuthService,
+};
 
 use super::dependencies::ServerDependencies;
 
 pub struct Server {
-    _dependencies: Arc<ServerDependencies>,
     pub server_handle: tokio::task::JoinHandle<()>,
 }
 
 impl Server {
     pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
-        let auth_service = AuthService::new();
+        dependencies
+            .db_manager
+            .create_table::<User>()
+            .await
+            .expect("Error creating stock table");
+        dependencies
+            .db_manager
+            .create_table::<Stock>()
+            .await
+            .expect("Error creating stock table");
+
+        let auth_service = AuthService::new(dependencies);
 
         let service = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(common::FILE_DESCRIPTOR_SET)
@@ -33,10 +49,7 @@ impl Server {
             }
         });
 
-        let dependencies = Arc::new(dependencies);
-
         Server {
-            _dependencies: dependencies,
             server_handle: handle,
         }
     }

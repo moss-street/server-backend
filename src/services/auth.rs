@@ -6,14 +6,23 @@ use common::{
     UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
 };
 
+use tokio::time::Instant;
 use tonic::Request;
 
-#[derive(Default)]
-pub struct AuthService;
+use crate::{
+    db::{manager::DatabaseImpl, schemas::user::UserBuilder},
+    http::dependencies::ServerDependencies,
+    passwords::Password,
+};
+
+#[derive(Debug)]
+pub struct AuthService {
+    server_deps: ServerDependencies,
+}
 
 impl AuthService {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(server_deps: ServerDependencies) -> Self {
+        Self { server_deps }
     }
 }
 
@@ -21,14 +30,41 @@ impl AuthService {
 impl AuthorizationService for AuthService {
     async fn create_user(
         &self,
-        _request: Request<UserCreateRequest>,
+        request: Request<UserCreateRequest>,
     ) -> Result<tonic::Response<UserCreateResponse>, tonic::Status> {
-        let response = UserCreateResponse {
-            status: 0,
-            message: "response".into(),
-        };
+        let request = request.get_ref();
+        let password_hash = Password::new(request.password.as_str()).map_err(|_| {
+            tonic::Status::invalid_argument(
+                "Password provided was invalid, please try again".to_owned(),
+            )
+        })?;
 
-        Ok(tonic::Response::new(response))
+        match UserBuilder::default()
+            ._id(None)
+            .email(request.email.clone())
+            .password(password_hash)
+            .first_name(request.first_name.clone())
+            .last_name(request.last_name.clone())
+            .created_at(Instant::now())
+            .build()
+        {
+            Ok(user) => {
+                let user_write_result = self
+                    .server_deps
+                    .db_manager
+                    .write_to_table(&user)
+                    .await
+                    .map_err(|e| tonic::Status::internal(format!("Server Error: {e}")))?;
+                Ok(tonic::Response::new(UserCreateResponse {
+                    status: 1,
+                    message: format!("{:#?}", user_write_result),
+                }))
+            }
+            Err(e) => Ok(tonic::Response::new(UserCreateResponse {
+                status: 0,
+                message: format!("Failed to create user with error: {e:#}"),
+            })),
+        }
     }
 
     async fn get_user(
