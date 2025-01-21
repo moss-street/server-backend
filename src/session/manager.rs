@@ -1,5 +1,6 @@
+use bcrypt::{hash, DEFAULT_COST};
 use chrono::{DateTime, Duration, Utc};
-use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Session {
@@ -10,20 +11,20 @@ pub struct Session {
 
 pub trait SessionManagerImpl {
     fn get_session(&mut self, user_id: i32) -> Option<&Session>;
-    fn _new_session(&mut self, user_id: i32) -> Option<&Session>;
+    fn new_session(&mut self, user_id: i32) -> Option<&Session>;
     fn generate_token(&self, user_id: i32) -> String;
     fn cleanup(&mut self);
 }
 
 #[derive(Debug)]
 pub struct SessionManager {
-    pub sessions: Vec<Session>,
+    pub sessions: HashMap<i32, Session>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            sessions: Vec::new(),
+            sessions: HashMap::new(),
         }
     }
 }
@@ -37,37 +38,36 @@ impl SessionManagerImpl for SessionManager {
         // Concatenate the user ID and timestamp
         let input = format!("{}:{}", user_id, timestamp);
 
-        // Hash the input using SHA-256
-        let mut hasher = Sha256::new();
-        hasher.update(input.as_bytes());
-        let hash = hasher.finalize();
-
-        // Convert the hash to a hexadecimal string
-        format!("{:x}", hash)
+        // Hash the input using bcrypt
+        match hash(input, DEFAULT_COST) {
+            Ok(hashed) => hashed,
+            Err(e) => {
+                eprintln!("Failed to generate bcrypt hash: {}", e);
+                String::new() // Return an empty string on failure
+            }
+        }
     }
 
     fn get_session(&mut self, user_id: i32) -> Option<&Session> {
         // Look for the damn thing
-        if let Some(session_index) = self
-            .sessions
-            .iter()
-            .position(|session| session.user_id == user_id)
-        {
+        if let Some(session) = self.sessions.get(&user_id) {
             let now = Utc::now();
 
             // Check if time is good if not, remove and make a new one
-            if self.sessions[session_index].expire_time <= now {
-                self.sessions.remove(session_index);
-                self._new_session(user_id)
+            if session.expire_time <= now {
+                self.sessions.remove(&user_id);
+                self.new_session(user_id)
             } else {
-                Some(&self.sessions[session_index])
+                //I can't just say Some(session) here because rust goes apeshit when I
+                // Try to return an immutable instance after borrowing it mutably
+                self.sessions.get(&user_id)
             }
         } else {
-            self._new_session(user_id)
+            self.new_session(user_id)
         }
     }
 
-    fn _new_session(&mut self, user_id: i32) -> Option<&Session> {
+    fn new_session(&mut self, user_id: i32) -> Option<&Session> {
         let token: String = self.generate_token(user_id);
         let expire_time: DateTime<Utc> = Utc::now() + Duration::minutes(5);
 
@@ -77,17 +77,16 @@ impl SessionManagerImpl for SessionManager {
             expire_time,
         };
 
-        // Add the session to the list
-        self.sessions.push(session);
+        self.sessions.insert(user_id, session);
 
         // Return a reference to the newly created session
-        self.sessions.last()
+        self.sessions.get(&user_id)
     }
 
     fn cleanup(&mut self) {
         // Periodically call this I guess.
         let now = Utc::now();
 
-        self.sessions.retain(|session| session.expire_time > now);
+        self.sessions.retain(|_, session| session.expire_time > now);
     }
 }
