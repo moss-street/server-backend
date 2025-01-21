@@ -4,6 +4,7 @@ use anyhow::Result;
 use moss_street_libs::{
     db::manager::DBManager,
     http::{dependencies::ServerDependencies, server::Server},
+    session::manager::SessionManager,
 };
 
 use r2d2::Pool;
@@ -14,8 +15,9 @@ async fn main() -> Result<()> {
     let manager = SqliteConnectionManager::file("local.db");
     let pool = Pool::new(manager)?;
     let db_manager = Arc::new(DBManager::new(pool));
+    let session_manager = Arc::new(SessionManager::new());
 
-    let dependencies = ServerDependencies::new(db_manager);
+    let dependencies = ServerDependencies::new(db_manager, session_manager);
 
     let ip = "127.0.0.1:6969";
     let addr = ip.parse()?;
