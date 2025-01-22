@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     let manager = SqliteConnectionManager::file("local.db");
     let pool = Pool::new(manager)?;
     let db_manager = Arc::new(DBManager::new(pool));
-    let session_manager = Arc::new(SessionManager::new());
+    let session_manager = Arc::new(SessionManager::default());
 
     let dependencies = ServerDependencies::new(db_manager, session_manager);
 
