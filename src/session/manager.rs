@@ -3,6 +3,7 @@ use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct Session {
     token: String,
     user_id: i32,
@@ -16,17 +17,9 @@ pub trait SessionManagerImpl {
     fn cleanup(&mut self);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SessionManager {
-    pub sessions: HashMap<i32, Session>,
-}
-
-impl SessionManager {
-    pub fn new() -> Self {
-        Self {
-            sessions: HashMap::new(),
-        }
-    }
+    sessions: HashMap<i32, Session>,
 }
 
 impl SessionManagerImpl for SessionManager {
