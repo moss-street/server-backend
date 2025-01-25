@@ -13,6 +13,10 @@ pub trait DatabaseImpl {
     async fn execute_db_query(&self, query: String) -> Result<()>;
     async fn db_lookup<T: TableImpl + Send>(&self, id: i32) -> Result<T>;
     async fn create_table<T: TableImpl + Send + Sync>(&self) -> Result<()>;
+    async fn get_row<T: TableImpl + Send + Sync>(
+        &self,
+        fields: Vec<(&str, &str)>,
+    ) -> Result<Vec<T>>;
 }
 
 #[derive(Debug)]
@@ -67,20 +71,35 @@ impl DatabaseImpl for DBManager {
         let result = self.execute_db_query(T::create_table_query()).await;
         Ok(result?)
     }
-}
 
-impl UserLoginImpl for DBManager {
-    /// One off function for logging in a user where we lookup by email since we can't know the id
-    /// of the user until we look it up.
-    fn generate_lookup_by_email<T: TableImpl>(&self, email: &str) -> Result<T> {
+    async fn get_row<T: TableImpl + Send + Sync>(
+        &self,
+        fields: Vec<(&str, &str)>,
+    ) -> Result<Vec<T>> {
+        // This monstrosity of a line loops through each tuple of field,value in the vector and formats them
+        // As "field = "value"", and also joins each with an " and " inbetween for a nice sql query
+        let where_clause = fields
+            .iter()
+            .map(|(col, value)| format!(r#"{} = "{}""#, col, value))
+            .collect::<Vec<String>>()
+            .join(" and ");
+
         let query = format!(
-            r#"SELECT id, email, password, first_name, last_name, created_at 
-         FROM User 
-         WHERE email = '{email}'"#
+            "SELECT * FROM {} where {}",
+            T::get_table_name(),
+            where_clause
         );
+        println!("Fucking rust : {}", query);
+
         if let Some(conn) = self.connection_pool.try_get() {
-            let result = conn.query_row(&query, [], T::deserialize_query_result);
-            Ok(result?)
+            let mut prepped_query = conn.prepare(&query)?;
+
+            let fuck_im_so_good = prepped_query
+                .query_map([], |row| T::deserialize_query_result(row))?
+                .filter_map(|item| item.ok());
+
+            let results = fuck_im_so_good.collect();
+            Ok(results)
         } else {
             Err(anyhow!("No available connection compadre"))
         }
@@ -94,8 +113,5 @@ pub trait TableImpl {
     fn deserialize_query_result(result: &Row) -> Result<Self, rusqlite::Error>
     where
         Self: Sized;
-}
-
-pub trait UserLoginImpl {
-    fn generate_lookup_by_email<T: TableImpl>(&self, email: &str) -> Result<T>;
+    fn get_table_name() -> String;
 }

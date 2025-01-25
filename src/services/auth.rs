@@ -4,14 +4,11 @@ use rust_models::common::{
     UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
 };
 
-use tokio::time::Instant;
+use chrono::Utc;
 use tonic::Request;
 
 use crate::{
-    db::{
-        manager::{DatabaseImpl, UserLoginImpl},
-        schemas::user::UserBuilder,
-    },
+    db::{manager::DatabaseImpl, schemas::user::UserBuilder},
     http::dependencies::ServerDependencies,
     passwords::Password,
 };
@@ -46,7 +43,7 @@ impl AuthorizationService for AuthService {
             .password(password_hash)
             .first_name(request.first_name.clone())
             .last_name(request.last_name.clone())
-            .created_at(Instant::now())
+            .created_at(Utc::now())
             .build()
         {
             Ok(user) => {
@@ -95,22 +92,29 @@ impl AuthorizationService for AuthService {
     ) -> Result<tonic::Response<UserLoginResponse>, tonic::Status> {
         let request = request.get_ref();
 
-        let user: crate::db::schemas::user::User = self
+        let user: Vec<crate::db::schemas::user::User> = self
             .server_deps
             .db_manager
-            .generate_lookup_by_email(&request.email)
+            .get_row(vec![("email", &request.email)])
+            .await
             .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
 
-        user.verify_password(&request.password).map_err(|_| {
-            tonic::Status::invalid_argument(
-                "Password provided was invalid, please try again".to_owned(),
-            )
-        })?;
+        if let Some(user) = user.first() {
+            if !user.verify_password(&request.password).map_err(|e| {
+                tonic::Status::invalid_argument(format!("Interal Error occured {e}"))
+            })? {
+                return Err(tonic::Status::invalid_argument(
+                    "Invalid Password".to_owned(),
+                ));
+            }
 
-        let user: rust_models::common::User = user.into();
-        Ok(tonic::Response::new(UserLoginResponse {
-            status: 1,
-            user: Some(user),
-        }))
+            let proto_user = rust_models::common::User::from(user.clone());
+            Ok(tonic::Response::new(UserLoginResponse {
+                status: 1,
+                user: Some(proto_user),
+            }))
+        } else {
+            Err(tonic::Status::internal("No user found".to_string()))
+        }
     }
 }

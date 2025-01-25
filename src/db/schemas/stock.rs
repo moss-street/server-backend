@@ -28,4 +28,8 @@ impl TableImpl for Stock {
     fn deserialize_query_result(_result: &Row) -> Result<Self, rusqlite::Error> {
         todo!()
     }
+
+    fn get_table_name() -> String {
+        String::from("Stock")
+    }
 }
