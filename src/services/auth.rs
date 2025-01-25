@@ -100,11 +100,13 @@ impl AuthorizationService for AuthService {
             .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
 
         if let Some(user) = user.first() {
-            user.verify_password(&request.password).map_err(|_| {
-                tonic::Status::invalid_argument(
-                    "Password provided was invalid, please try again".to_owned(),
-                )
-            })?;
+            if !user.verify_password(&request.password).map_err(|e| {
+                tonic::Status::invalid_argument(format!("Interal Error occured {e}"))
+            })? {
+                return Err(tonic::Status::invalid_argument(
+                    "Invalid Password".to_owned(),
+                ));
+            }
 
             let proto_user = rust_models::common::User::from(user.clone());
             Ok(tonic::Response::new(UserLoginResponse {
