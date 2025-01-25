@@ -72,7 +72,6 @@ impl DatabaseImpl for DBManager {
 impl UserLoginImpl for DBManager {
     /// One off function for logging in a user where we lookup by email since we can't know the id
     /// of the user until we look it up.
-
     fn generate_lookup_by_email<T: TableImpl>(&self, email: &str) -> Result<T> {
         let query = format!(
             r#"SELECT id, email, password, first_name, last_name, created_at 

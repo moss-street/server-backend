@@ -107,14 +107,10 @@ impl AuthorizationService for AuthService {
             )
         })?;
 
+        let user: rust_models::common::User = user.into();
         Ok(tonic::Response::new(UserLoginResponse {
             status: 1,
-            user: Some(rust_models::common::User {
-                uuid: user.id.unwrap_or_default() as u64,
-                username: user.email,
-                token: None,
-                creation_date: None,
-            }),
+            user: Some(user),
         }))
     }
 }

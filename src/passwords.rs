@@ -20,6 +20,12 @@ impl Password {
         })
     }
 
+    pub fn from_hash(hash: &str) -> Self {
+        Self {
+            hashed_password: hash.to_string(),
+        }
+    }
+
     /// Verifies a plaintext password against the hashed password.
     ///
     /// # Arguments
