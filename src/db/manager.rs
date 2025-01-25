@@ -69,6 +69,24 @@ impl DatabaseImpl for DBManager {
     }
 }
 
+impl UserLoginImpl for DBManager {
+    /// One off function for logging in a user where we lookup by email since we can't know the id
+    /// of the user until we look it up.
+    fn generate_lookup_by_email<T: TableImpl>(&self, email: &str) -> Result<T> {
+        let query = format!(
+            r#"SELECT id, email, password, first_name, last_name, created_at 
+         FROM User 
+         WHERE email = '{email}'"#
+        );
+        if let Some(conn) = self.connection_pool.try_get() {
+            let result = conn.query_row(&query, [], T::deserialize_query_result);
+            Ok(result?)
+        } else {
+            Err(anyhow!("No available connection compadre"))
+        }
+    }
+}
+
 pub trait TableImpl {
     fn create_table_query() -> String;
     fn generate_db_load_query(&self) -> String;
@@ -76,4 +94,8 @@ pub trait TableImpl {
     fn deserialize_query_result(result: &Row) -> Result<Self, rusqlite::Error>
     where
         Self: Sized;
+}
+
+pub trait UserLoginImpl {
+    fn generate_lookup_by_email<T: TableImpl>(&self, email: &str) -> Result<T>;
 }

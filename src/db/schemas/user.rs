@@ -1,4 +1,5 @@
 use derive_builder::Builder;
+use prost_types::Timestamp;
 use rusqlite::Row;
 use tokio::time::Instant;
 
@@ -8,12 +9,29 @@ use crate::{db::manager::TableImpl, passwords::Password};
 pub struct User {
     // id is optinal because when we create a new item in the db, we don't actually set the id, we
     // let sqlite do that. We only set this field when we read from the db.
-    _id: Option<i32>,
-    email: String,
+    pub id: Option<u64>,
+    pub email: String,
     password: Password,
-    first_name: String,
-    last_name: String,
-    created_at: Instant,
+    pub first_name: String,
+    pub last_name: String,
+    pub created_at: Instant,
+}
+
+impl User {
+    pub fn verify_password(&self, plaintext: &str) -> Result<bool, bcrypt::BcryptError> {
+        self.password.verify(plaintext)
+    }
+}
+
+impl From<User> for rust_models::common::User {
+    fn from(val: User) -> Self {
+        rust_models::common::User {
+            uuid: val.id.unwrap_or_default(),
+            username: val.email,
+            token: None,
+            creation_date: Some(Timestamp::default()),
+        }
+    }
 }
 
 impl TableImpl for User {
@@ -45,7 +63,18 @@ impl TableImpl for User {
         todo!()
     }
 
-    fn deserialize_query_result(_result: &Row) -> Result<Self, rusqlite::Error> {
-        todo!()
+    fn deserialize_query_result(result: &Row) -> Result<Self, rusqlite::Error> {
+        println!("result was {result:#?}");
+        let password: String = result.get("password")?;
+        let password = Password::from_hash(&password);
+
+        Ok(User {
+            id: Some(result.get("id")?),
+            email: result.get("email")?,
+            first_name: result.get("first_name")?,
+            last_name: result.get("last_name")?,
+            password,
+            created_at: Instant::now(),
+        })
     }
 }
