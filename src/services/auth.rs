@@ -1,6 +1,4 @@
-use rust_models::common;
-
-use common::{
+use rust_models::common::{
     authorization_service_server::AuthorizationService, UserCreateRequest, UserCreateResponse,
     UserDeleteRequest, UserDeleteResponse, UserGetRequest, UserGetResponse, UserLoginRequest,
     UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
@@ -10,7 +8,10 @@ use tokio::time::Instant;
 use tonic::Request;
 
 use crate::{
-    db::{manager::DatabaseImpl, schemas::user::UserBuilder},
+    db::{
+        manager::{DatabaseImpl, UserLoginImpl},
+        schemas::user::UserBuilder,
+    },
     http::dependencies::ServerDependencies,
     passwords::Password,
 };
@@ -40,7 +41,7 @@ impl AuthorizationService for AuthService {
         })?;
 
         match UserBuilder::default()
-            ._id(None)
+            .id(None)
             .email(request.email.clone())
             .password(password_hash)
             .first_name(request.first_name.clone())
@@ -90,8 +91,30 @@ impl AuthorizationService for AuthService {
 
     async fn login_user(
         &self,
-        _request: Request<UserLoginRequest>,
+        request: Request<UserLoginRequest>,
     ) -> Result<tonic::Response<UserLoginResponse>, tonic::Status> {
-        todo!()
+        let request = request.get_ref();
+
+        let user: crate::db::schemas::user::User = self
+            .server_deps
+            .db_manager
+            .generate_lookup_by_email(&request.email)
+            .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
+
+        user.verify_password(&request.password).map_err(|_| {
+            tonic::Status::invalid_argument(
+                "Password provided was invalid, please try again".to_owned(),
+            )
+        })?;
+
+        Ok(tonic::Response::new(UserLoginResponse {
+            status: 1,
+            user: Some(rust_models::common::User {
+                uuid: user.id.unwrap_or_default() as u64,
+                username: user.email,
+                token: None,
+                creation_date: None,
+            }),
+        }))
     }
 }

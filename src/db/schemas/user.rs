@@ -8,12 +8,18 @@ use crate::{db::manager::TableImpl, passwords::Password};
 pub struct User {
     // id is optinal because when we create a new item in the db, we don't actually set the id, we
     // let sqlite do that. We only set this field when we read from the db.
-    _id: Option<i32>,
-    email: String,
+    pub id: Option<i32>,
+    pub email: String,
     password: Password,
-    first_name: String,
-    last_name: String,
-    created_at: Instant,
+    pub first_name: String,
+    pub last_name: String,
+    pub created_at: Instant,
+}
+
+impl User {
+    pub fn verify_password(&self, plaintext: &str) -> Result<bool, bcrypt::BcryptError> {
+        self.password.verify(plaintext)
+    }
 }
 
 impl TableImpl for User {
@@ -45,7 +51,15 @@ impl TableImpl for User {
         todo!()
     }
 
-    fn deserialize_query_result(_result: &Row) -> Result<Self, rusqlite::Error> {
-        todo!()
+    fn deserialize_query_result(result: &Row) -> Result<Self, rusqlite::Error> {
+        println!("result was {result:#?}");
+        Ok(User {
+            id: Some(result.get("id")?),
+            email: result.get("email")?,
+            first_name: result.get("first_name")?,
+            last_name: result.get("last_name")?,
+            password: result.get("password")?,
+            created_at: result.get("created_at")?,
+        })
     }
 }
