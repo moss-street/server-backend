@@ -1,11 +1,13 @@
+use std::str::FromStr;
+
+use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use prost_types::Timestamp;
 use rusqlite::Row;
-use tokio::time::Instant;
 
 use crate::{db::manager::TableImpl, passwords::Password};
 
-#[derive(Debug, Builder)]
+#[derive(Debug, Builder, Clone)]
 pub struct User {
     // id is optinal because when we create a new item in the db, we don't actually set the id, we
     // let sqlite do that. We only set this field when we read from the db.
@@ -14,7 +16,7 @@ pub struct User {
     password: Password,
     pub first_name: String,
     pub last_name: String,
-    pub created_at: Instant,
+    pub created_at: DateTime<Utc>,
 }
 
 impl User {
@@ -25,11 +27,13 @@ impl User {
 
 impl From<User> for rust_models::common::User {
     fn from(val: User) -> Self {
+        let creation_date: Option<Timestamp> =
+            Timestamp::from_str(&val.created_at.to_rfc3339()).ok();
         rust_models::common::User {
             uuid: val.id.unwrap_or_default(),
             username: val.email,
             token: None,
-            creation_date: Some(Timestamp::default()),
+            creation_date,
         }
     }
 }
@@ -68,13 +72,23 @@ impl TableImpl for User {
         let password: String = result.get("password")?;
         let password = Password::from_hash(&password);
 
+        let date_string: String = result.get("created_at")?;
+        let created_at = DateTime::parse_from_rfc3339(&date_string)
+            .unwrap_or_default()
+            .into();
+
         Ok(User {
             id: Some(result.get("id")?),
             email: result.get("email")?,
             first_name: result.get("first_name")?,
             last_name: result.get("last_name")?,
             password,
-            created_at: Instant::now(),
+            created_at,
         })
+    }
+
+    fn get_table_name() -> String {
+        //Whatever
+        String::from("User")
     }
 }
