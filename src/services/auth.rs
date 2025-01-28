@@ -4,11 +4,13 @@ use rust_models::common::{
     UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
 };
 
-use chrono::Utc;
 use tonic::Request;
 
 use crate::{
-    db::{manager::DatabaseImpl, schemas::user::UserBuilder},
+    db::{
+        manager::DatabaseImpl,
+        models::user::{self, UserBuilder},
+    },
     http::dependencies::ServerDependencies,
     passwords::Password,
 };
@@ -40,18 +42,16 @@ impl AuthorizationService for AuthService {
         match UserBuilder::default()
             .id(None)
             .email(request.email.clone())
-            .password(password_hash)
+            .password(password_hash.hashed().to_owned())
             .first_name(request.first_name.clone())
             .last_name(request.last_name.clone())
-            .created_at(Utc::now())
             .build()
         {
             Ok(user) => {
                 let user_write_result = self
                     .server_deps
                     .db_manager
-                    .write_to_table(&user)
-                    .await
+                    .insert_row(user::schema::users::table, &user)
                     .map_err(|e| tonic::Status::internal(format!("Server Error: {e}")))?;
                 Ok(tonic::Response::new(UserCreateResponse {
                     status: 1,
@@ -92,10 +92,10 @@ impl AuthorizationService for AuthService {
     ) -> Result<tonic::Response<UserLoginResponse>, tonic::Status> {
         let request = request.get_ref();
 
-        let user: Vec<crate::db::schemas::user::User> = self
+        let user: Vec<crate::db::models::user::User> = self
             .server_deps
             .db_manager
-            .get_row(vec![("email", &request.email)])
+            .query_row(vec![("email", &request.email)])
             .await
             .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
 
