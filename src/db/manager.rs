@@ -24,7 +24,7 @@ pub trait DatabaseImpl {
         <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
         InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>;
 
-    async fn insert_rows<T>(&self, obj: &Vec<&T>) -> Result<()>
+    async fn insert_rows<T, 'a, 'b>(&self, _obj: &'a [&'b T]) -> Result<()>
     where
         T: Send + Sync + 'static;
 }
@@ -42,13 +42,13 @@ impl DBManager {
 
 #[async_trait]
 impl DatabaseImpl for DBManager {
-    async fn query_row<T>(&self, fields: Vec<(&str, &str)>) -> Result<T>
+    async fn query_row<T>(&self, _fields: Vec<(&str, &str)>) -> Result<T>
     where
         T: Send + Sync + 'static,
     {
         todo!()
     }
-    async fn query_rows<T>(&self, fields: Vec<(&str, &str)>) -> Result<Vec<T>>
+    async fn query_rows<T>(&self, _fields: Vec<(&str, &str)>) -> Result<Vec<T>>
     where
         T: Send + Sync + 'static,
     {
@@ -72,7 +72,7 @@ impl DatabaseImpl for DBManager {
             .map_err(|e| anyhow!("Insert row error: {e:#?}"))
     }
 
-    async fn insert_rows<T>(&self, obj: &Vec<&T>) -> Result<()>
+    async fn insert_rows<T, 'a, 'b>(&self, _obj: &'a [&'b T]) -> Result<()>
     where
         T: Send + Sync + 'static,
     {
