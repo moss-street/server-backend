@@ -34,3 +34,4 @@ derive_builder = "0.20.2"
 bcrypt = "0.16.0"
 chrono = "0.4.39"
 diesel = {version = "2.2", features = ["r2d2", "sqlite", "chrono"]}
+clap = { version = "4.5.27", features = ["derive"] }
