@@ -4,13 +4,7 @@ use common::authorization_service_server::AuthorizationServiceServer;
 
 use std::net::SocketAddr;
 
-use crate::{
-    db::{
-        manager::DatabaseImpl,
-        schemas::{stock::Stock, user::User},
-    },
-    services::auth::AuthService,
-};
+use crate::services::auth::AuthService;
 
 use super::dependencies::ServerDependencies;
 
@@ -20,17 +14,6 @@ pub struct Server {
 
 impl Server {
     pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
-        dependencies
-            .db_manager
-            .create_table::<User>()
-            .await
-            .expect("Error creating stock table");
-        dependencies
-            .db_manager
-            .create_table::<Stock>()
-            .await
-            .expect("Error creating stock table");
-
         let auth_service = AuthService::new(dependencies);
 
         let service = tonic_reflection::server::Builder::configure()
