@@ -10,7 +10,7 @@ use diesel::prelude::{Insertable, Queryable, Selectable};
 pub(crate) mod schema {
     diesel::table! {
         users (id) {
-            id -> Integer,
+            id -> Nullable<Integer>,
             email -> Text,
             password -> Text,
             first_name -> Text,
@@ -26,7 +26,7 @@ pub struct User {
     // let sqlite do that. We only set this field when we read from the db.
     pub id: Option<i32>,
     pub email: String,
-    password: String,
+    pub password: String,
     pub first_name: String,
     pub last_name: String,
 }

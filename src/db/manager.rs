@@ -1,19 +1,29 @@
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
+use std::future::Future;
 
+use diesel::dsl::sql;
+use diesel::expression::SqlLiteral;
 use diesel::query_builder::{InsertStatement, QueryFragment, QueryId};
+use diesel::query_dsl::methods::{FilterDsl, LoadQuery};
 use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::sql_types::Bool;
 use diesel::sqlite::SqliteConnection;
 use diesel::{query_dsl::methods::ExecuteDsl, sqlite::Sqlite, Table};
-use diesel::{Insertable, RunQueryDsl};
+use diesel::{Insertable, QueryDsl, Queryable, RunQueryDsl};
 
-#[async_trait]
 pub trait DatabaseImpl {
-    async fn query_row<T>(&self, fields: Vec<(&str, &str)>) -> Result<T>
+    fn query_row<'a, T, U>(
+        &self,
+        table: T,
+        fields: Vec<(&str, &str)>,
+    ) -> impl Future<Output = Result<Vec<U>>>
     where
-        T: Send + Sync + 'static;
+        T: Table + QueryDsl + 'static,
+        T::Query: FilterDsl<SqlLiteral<Bool>>,
+        <T::Query as FilterDsl<SqlLiteral<Bool>>>::Output: LoadQuery<'a, SqliteConnection, U>,
+        U: Queryable<T::SqlType, Sqlite> + Send + Sync + 'static;
 
-    async fn query_rows<T>(&self, fields: Vec<(&str, &str)>) -> Result<Vec<T>>
+    fn query_rows<T>(&self, fields: Vec<(&str, &str)>) -> impl Future<Output = Result<Vec<T>>>
     where
         T: Send + Sync + 'static;
 
@@ -24,7 +34,7 @@ pub trait DatabaseImpl {
         <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
         InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>;
 
-    async fn insert_rows<T, 'a, 'b>(&self, _obj: &'a [&'b T]) -> Result<()>
+    fn insert_rows<T>(&self, _obj: &[&T]) -> Result<()>
     where
         T: Send + Sync + 'static;
 }
@@ -40,14 +50,39 @@ impl DBManager {
     }
 }
 
-#[async_trait]
 impl DatabaseImpl for DBManager {
-    async fn query_row<T>(&self, _fields: Vec<(&str, &str)>) -> Result<T>
+    async fn query_row<'a, T, U>(&self, table: T, fields: Vec<(&str, &str)>) -> Result<Vec<U>>
     where
-        T: Send + Sync + 'static,
+        T: Table + QueryDsl + 'static,
+        T::Query: FilterDsl<SqlLiteral<Bool>>,
+        <T::Query as FilterDsl<SqlLiteral<Bool>>>::Output: LoadQuery<'a, SqliteConnection, U>,
+        U: Queryable<T::SqlType, Sqlite> + Send + Sync + 'static,
     {
-        todo!()
+        let Some(mut conn) = self.connection_pool.try_get() else {
+            return Err(anyhow!("No available connection in connection pool!"));
+        };
+
+        // Start with an empty filter string
+        let mut filter_string = String::from("");
+
+        // Dynamically build the filter string with AND conditions
+        for (col, _val) in fields {
+            // Add each condition as "column = value"
+            let condition = format!("{} = ?", col);
+            filter_string.push_str(" AND ");
+            filter_string.push_str(&condition);
+        }
+
+        // Create the SQL filter expression
+        let query = table.filter(sql::<Bool>(&filter_string));
+
+        let results = query // bind the first parameter as a Text type
+            .load::<U>(&mut *conn)
+            .map_err(|e| anyhow!("Query row error: {e:#?}"))?;
+
+        Ok(results)
     }
+
     async fn query_rows<T>(&self, _fields: Vec<(&str, &str)>) -> Result<Vec<T>>
     where
         T: Send + Sync + 'static,
@@ -72,7 +107,7 @@ impl DatabaseImpl for DBManager {
             .map_err(|e| anyhow!("Insert row error: {e:#?}"))
     }
 
-    async fn insert_rows<T, 'a, 'b>(&self, _obj: &'a [&'b T]) -> Result<()>
+    fn insert_rows<T>(&self, _obj: &[&T]) -> Result<()>
     where
         T: Send + Sync + 'static,
     {
