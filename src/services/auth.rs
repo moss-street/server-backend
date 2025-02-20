@@ -95,7 +95,7 @@ impl AuthorizationService for AuthService {
         let user: Vec<crate::db::models::user::User> = self
             .server_deps
             .db_manager
-            .query_row(vec![("email", &request.email)])
+            .query_row(user::schema::users::table, vec![("email", &request.email)])
             .await
             .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
 
