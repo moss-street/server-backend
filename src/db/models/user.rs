@@ -7,6 +7,8 @@ use prost_types::Timestamp;
 use crate::passwords::Password;
 use diesel::prelude::{Insertable, Queryable, Selectable};
 
+use super::stock::StockWallet;
+
 pub(crate) mod schema {
     diesel::table! {
         users (id) {
@@ -52,6 +54,10 @@ impl User {
         .map_err(|e| anyhow!("Failed to create table: {e:#?}"))?;
 
         Ok(())
+    }
+
+    fn get_wallet(&self) -> Vec<StockWallet> {
+        StockWallet::get_wallet(self.id)
     }
 }
 
