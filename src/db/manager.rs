@@ -62,16 +62,11 @@ impl DatabaseImpl for DBManager {
             return Err(anyhow!("No available connection in connection pool!"));
         };
 
-        // Start with an empty filter string
-        let mut filter_string = String::from("");
-
-        // Dynamically build the filter string with AND conditions
-        for (col, _val) in fields {
-            // Add each condition as "column = value"
-            let condition = format!("{} = ?", col);
-            filter_string.push_str(" AND ");
-            filter_string.push_str(&condition);
-        }
+        let filter_string = fields
+            .iter()
+            .map(|(col, val)| format!(" {} = '{}' ", col, val))
+            .collect::<Vec<_>>()
+            .join("AND");
 
         // Create the SQL filter expression
         let query = table.filter(sql::<Bool>(&filter_string));
