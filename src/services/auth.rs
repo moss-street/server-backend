@@ -1,8 +1,10 @@
 use rust_models::common::{
-    authorization_service_server::AuthorizationService, UserCreateRequest, UserCreateResponse,
-    UserDeleteRequest, UserDeleteResponse, UserGetRequest, UserGetResponse, UserLoginRequest,
-    UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
+    authorization_service_server::AuthorizationService, Token, UserCreateRequest,
+    UserCreateResponse, UserDeleteRequest, UserDeleteResponse, UserGetRequest, UserGetResponse,
+    UserLoginRequest, UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
 };
+
+use prost_types::Timestamp;
 
 use tonic::Request;
 
@@ -13,6 +15,7 @@ use crate::{
     },
     http::dependencies::ServerDependencies,
     passwords::Password,
+    session::manager::SessionManagerImpl,
 };
 
 #[derive(Debug)]
@@ -108,7 +111,30 @@ impl AuthorizationService for AuthService {
                 ));
             }
 
-            let proto_user = rust_models::common::User::from(user.clone());
+            let mut proto_user = rust_models::common::User::from(user.clone());
+
+            // This is where we get/create the token and insert it to the request response
+            if let Some(session) = self
+                .server_deps
+                .session_manager
+                .get_session(proto_user.uuid)
+            {
+                let expire_ts: Option<Timestamp> = Some(Timestamp {
+                    seconds: session.expire_time.timestamp(),
+                    nanos: session.expire_time.timestamp_subsec_nanos() as i32,
+                });
+                let create_ts: Option<Timestamp> = Some(Timestamp {
+                    seconds: session.create_time.timestamp(),
+                    nanos: session.create_time.timestamp_subsec_nanos() as i32,
+                });
+
+                proto_user.token = Some(Token {
+                    token: session.token.clone(),
+                    create_ts,
+                    expire_ts,
+                })
+            }
+
             Ok(tonic::Response::new(UserLoginResponse {
                 status: 1,
                 user: Some(proto_user),
