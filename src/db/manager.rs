@@ -12,7 +12,7 @@ use diesel::{query_dsl::methods::ExecuteDsl, sqlite::Sqlite, Table};
 use diesel::{Insertable, QueryDsl, Queryable, RunQueryDsl};
 
 pub trait DatabaseImpl {
-    fn query_row<'a, T, U>(
+    fn query_rows<'a, T, U>(
         &self,
         table: T,
         fields: Vec<(&str, &str)>,
@@ -23,10 +23,6 @@ pub trait DatabaseImpl {
         <T::Query as FilterDsl<SqlLiteral<Bool>>>::Output: LoadQuery<'a, SqliteConnection, U>,
         U: Queryable<T::SqlType, Sqlite> + Send + Sync + 'static;
 
-    fn query_rows<T>(&self, fields: Vec<(&str, &str)>) -> impl Future<Output = Result<Vec<T>>>
-    where
-        T: Send + Sync + 'static;
-
     fn insert_row<T, U>(&self, table: T, obj: &U) -> Result<usize>
     where
         T: Table + Send + 'static,
@@ -34,9 +30,12 @@ pub trait DatabaseImpl {
         <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
         InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>;
 
-    fn insert_rows<T>(&self, _obj: &[&T]) -> Result<()>
+    fn insert_rows<T, U>(&self, table: T, objs: Vec<&U>) -> Result<usize>
     where
-        T: Send + Sync + 'static;
+        T: Table + Send + Clone + 'static,
+        U: Insertable<T> + Clone + Send,
+        <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
+        InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>;
 }
 
 #[derive(Debug)]
@@ -51,7 +50,7 @@ impl DBManager {
 }
 
 impl DatabaseImpl for DBManager {
-    async fn query_row<'a, T, U>(&self, table: T, fields: Vec<(&str, &str)>) -> Result<Vec<U>>
+    async fn query_rows<'a, T, U>(&self, table: T, fields: Vec<(&str, &str)>) -> Result<Vec<U>>
     where
         T: Table + QueryDsl + 'static,
         T::Query: FilterDsl<SqlLiteral<Bool>>,
@@ -78,13 +77,6 @@ impl DatabaseImpl for DBManager {
         Ok(results)
     }
 
-    async fn query_rows<T>(&self, _fields: Vec<(&str, &str)>) -> Result<Vec<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        todo!()
-    }
-
     fn insert_row<T, U>(&self, table: T, obj: &U) -> Result<usize>
     where
         T: Table + Send + 'static,
@@ -102,10 +94,24 @@ impl DatabaseImpl for DBManager {
             .map_err(|e| anyhow!("Insert row error: {e:#?}"))
     }
 
-    fn insert_rows<T>(&self, _obj: &[&T]) -> Result<()>
+    fn insert_rows<T, U>(&self, table: T, objs: Vec<&U>) -> Result<usize>
     where
-        T: Send + Sync + 'static,
+        T: Table + Send + Clone + 'static,
+        U: Insertable<T> + Clone + Send,
+        <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
+        InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>,
     {
-        todo!()
+        // A janky way of inserting bulk rows iteratively calling insert_row
+        // Ideally this would be it's own function which can do a bulk insert but rust
+        // is hard.
+        // TODO: when someone with skill can, make this bulk insert objs with one query
+        Ok(objs
+            .iter()
+            .map(|o| {
+                let table = table.clone();
+                self.insert_row(table, *o).ok()
+            })
+            .map(|r| r.unwrap_or(0))
+            .sum())
     }
 }
