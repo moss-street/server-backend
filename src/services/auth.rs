@@ -13,6 +13,7 @@ use crate::{
     },
     http::dependencies::ServerDependencies,
     passwords::Password,
+    session::manager::SessionManagerImpl,
 };
 
 #[derive(Debug)]
@@ -108,7 +109,17 @@ impl AuthorizationService for AuthService {
                 ));
             }
 
-            let proto_user = rust_models::common::User::from(user.clone());
+            let mut proto_user = rust_models::common::User::from(user.clone());
+
+            proto_user.token = Some(rust_models::common::Token::from(
+                self.server_deps
+                    .session_manager
+                    .new_session(user.clone())
+                    .ok_or_else(|| {
+                        tonic::Status::not_found("Invalid token during generation".to_string())
+                    })?,
+            ));
+
             Ok(tonic::Response::new(UserLoginResponse {
                 status: 1,
                 user: Some(proto_user),
