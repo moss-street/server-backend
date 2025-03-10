@@ -19,7 +19,7 @@ pub(crate) mod schema {
     }
 }
 
-#[derive(Debug, Builder, Clone, Queryable, Selectable, Insertable)]
+#[derive(Debug, Builder, Clone, Queryable, Selectable, Insertable, PartialEq, Eq)]
 #[diesel(table_name = schema::users)]
 pub struct User {
     // id is optinal because when we create a new item in the db, we don't actually set the id, we
