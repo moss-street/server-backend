@@ -3,7 +3,10 @@ use std::{net::Ipv4Addr, sync::Arc};
 use anyhow::Result;
 use clap::Parser;
 use moss_street_libs::{
-    db::{manager::DBManager, models::user::User},
+    db::{
+        manager::DBManager,
+        models::{stock::Stock, user::User, wallet::Wallet},
+    },
     http::{dependencies::ServerDependencies, server::Server},
     session::manager::SessionManager,
 };
@@ -40,6 +43,8 @@ async fn main() -> Result<()> {
     };
 
     let _ = User::initialize_database(&mut connection);
+    let _ = Stock::initialize_database(&mut connection);
+    let _ = Wallet::initialize_database(&mut connection);
 
     let session_manager = Arc::new(SessionManager::default());
 
