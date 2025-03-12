@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - 27/1/fix-release-script
 
 jobs:
   build:
