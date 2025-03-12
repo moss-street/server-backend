@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 27/1/fix-release-script
 
 jobs:
   build:
@@ -45,7 +46,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: binary-${{ matrix.target }}
-        path: target/${{ matrix.target }}/release/
+        path: target/${{ matrix.target }}/release/backend
     
   release:
     needs: build
@@ -59,7 +60,10 @@ jobs:
     - name: Get latest release tag
       id: get_version
       run: |
-        latest_tag=$(git tag --sort=-v:refname | head -n 1 || echo "0.0.0")
+        latest_tag=$(git tag --sort=-v:refname | head -n 1)
+        if [[ -z "$latest_tag" || ! "$latest_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          latest_tag="0.0.0"
+        fi
         IFS='.' read -r major minor patch <<< "$latest_tag"
         new_tag="$major.$minor.$((patch+1))"
         echo "new_version=$new_tag" >> $GITHUB_ENV
@@ -69,11 +73,19 @@ jobs:
       with:
         path: artifacts
 
+    - name: Package binaries into zip files
+      run: |
+        mkdir -p release
+        for binary in artifacts/*/*; do
+          target_name=$(basename $(dirname "$binary"))
+          zip -j "release/${target_name}.zip" "$binary"
+        done
+          
     - name: Create release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.new_version }}
-        files: artifacts/**/*
+        files: release/*
         body: "Automated release ${{ env.new_version }}"
         draft: false
         prerelease: false
