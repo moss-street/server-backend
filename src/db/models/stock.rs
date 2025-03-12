@@ -34,7 +34,7 @@ impl Stock {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             symbol TEXT NOT NULL,
-            exchange_name TEXT NOT NULL,
+            exchange_name TEXT NOT NULL
         );
         "#,
         )
@@ -44,15 +44,3 @@ impl Stock {
         Ok(())
     }
 }
-
-// impl From<Stock> for rust_models::common::Stock {
-//     fn from(val: Stock) -> Self {
-//         let creation_date: Option<Timestamp> = Some(Timestamp::default());
-//         rust_models::common::User {
-//             uuid: val.id.unwrap_or_default(),
-//             username: val.email,
-//             token: None,
-//             creation_date,
-//         }
-//     }
-// }

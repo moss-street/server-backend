@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use derive_builder::Builder;
-use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
+use diesel::{sqlite::SqliteConnection, RunQueryDsl};
 use prost_types::Timestamp;
 
 use crate::passwords::Password;
