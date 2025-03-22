@@ -7,7 +7,7 @@ use prost_types::Timestamp;
 
 use crate::db::models::user::User;
 
-const DEFAULT_TOKEN_TIMEOUT_DURATION: Duration = Duration::seconds(30);
+const DEFAULT_TOKEN_TIMEOUT_DURATION: Duration = Duration::seconds(300);
 
 #[derive(Debug, Clone)]
 #[allow(unused)]
@@ -79,6 +79,12 @@ impl SessionToken {
                 Self(String::new()) // Return an empty string on failure
             }
         }
+    }
+}
+
+impl From<String> for SessionToken {
+    fn from(value: String) -> Self {
+        SessionToken(value)
     }
 }
 
