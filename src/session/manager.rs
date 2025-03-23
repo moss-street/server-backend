@@ -240,7 +240,7 @@ mod test {
             .expect("Session should be created");
 
         test_utils::set_mock_time(
-            test_utils::get_mock_time() + DEFAULT_TOKEN_TIMEOUT_DURATION.num_seconds(),
+            test_utils::get_mock_time() + DEFAULT_TOKEN_TIMEOUT_DURATION.num_seconds() + 1,
         ); // Fast-forward time
         manager.cleanup();
 
