@@ -6,22 +6,25 @@ use rust_models::common::{
 use tonic::Status;
 
 use crate::{
-    http::dependencies::ServerDependencies, session::manager::Session,
-    trading::backend::TradeBackend,
+    db::models::user::User,
+    http::dependencies::ServerDependencies,
+    trading::{
+        backend::TradeBackend,
+        market::{MarketProcessor, SwapPair},
+    },
 };
 
 #[derive(Debug)]
 pub struct TradeServiceImpl {
     _dependencies: ServerDependencies,
-    _trade_backend: TradeBackend,
+    trade_backend: TradeBackend,
 }
 
 impl TradeServiceImpl {
-    pub fn new(dependencies: ServerDependencies) -> Self {
-        let trade_backend = TradeBackend::new(&dependencies.db_manager);
+    pub fn new(dependencies: ServerDependencies, trade_backend: TradeBackend) -> Self {
         Self {
             _dependencies: dependencies,
-            _trade_backend: trade_backend,
+            trade_backend,
         }
     }
 }
@@ -32,16 +35,36 @@ impl TradeService for TradeServiceImpl {
         &self,
         request: tonic::Request<CreateTradeRequest>,
     ) -> Result<tonic::Response<CreateTradeResponse>, tonic::Status> {
-        let _session = request
+        // take user out of the request
+        let user = request
             .extensions()
-            .get::<Session>()
-            .ok_or_else(|| Status::unauthenticated("Session not found"))?;
+            .get::<User>()
+            .ok_or_else(|| Status::not_found("User not found"))?
+            .to_owned();
 
-        let create_trade_request = request.into_inner().trade_request;
+        // Unwrap is fine since the trade_request being the request is validated by the server
+        let create_trade_request = request.into_inner().trade_request.unwrap();
+        // validate swap_pair is in the market
+        let swap_pair = SwapPair::new(
+            create_trade_request.symbol_source.clone(),
+            create_trade_request.symbol_dest.clone(),
+        );
+
+        let market = self
+            .trade_backend
+            .get_market(swap_pair.clone())
+            .ok_or_else(|| {
+                Status::not_found(format!("Market for: {:#} does not exist", &swap_pair))
+            })?;
+
+        market.process_trade(user.clone(), create_trade_request.clone());
+
+        // package up user and swap pair and send it to the market for processing
+
         let response = CreateTradeResponse {
             status: CreateTradeStatus::Ok.into(),
             trade_id: Some(TradeId { trade_id: 1 }),
-            trade_request: create_trade_request,
+            trade_request: Some(create_trade_request),
         };
 
         Ok(tonic::Response::new(response))

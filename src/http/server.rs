@@ -9,6 +9,7 @@ use tonic::{Request, Status};
 use crate::{
     services::{auth::AuthService, trading::TradeServiceImpl},
     session::manager::{SessionManager, SessionManagerImpl, SessionToken},
+    trading::{backend::TradeBackend, market::Market},
 };
 
 use super::dependencies::ServerDependencies;
@@ -21,8 +22,14 @@ pub struct Server {
 
 impl Server {
     pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
+        let mut trade_backend = TradeBackend::new();
+        let btc_usd_market = Market::new("USD", "BTC");
+        let eth_usd_market = Market::new("USD", "ETH");
+        trade_backend.add_market(btc_usd_market);
+        trade_backend.add_market(eth_usd_market);
+
         let auth_service = AuthService::new(dependencies.clone());
-        let trade_service = TradeServiceImpl::new(dependencies.clone());
+        let trade_service = TradeServiceImpl::new(dependencies.clone(), trade_backend);
 
         let service = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(common::FILE_DESCRIPTOR_SET)
@@ -67,6 +74,10 @@ fn verify_auth(
         .get_session(SessionToken::from(token.to_owned()))
         .ok_or_else(|| tonic::Status::not_found("Invalid token"))?;
 
-    req.extensions_mut().insert(session);
+    let user = session_manager
+        .validate_session(session)
+        .ok_or_else(|| tonic::Status::unauthenticated("Token expired"))?;
+
+    req.extensions_mut().insert(user);
     Ok(req)
 }
