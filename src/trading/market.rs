@@ -1,14 +1,18 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{mpsc::{self, SyncSender}, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use anyhow::Result;
+use std::sync::mpsc::{sync_channel, Receiver, Sender};
+
+use anyhow::{Result, anyhow};
 
 use rust_models::common::TradeRequest;
 
 use crate::db;
+
+use super::models::user::{User, WalletOperations};
 
 /// A swap pair is the type of currency pairs that we are trading in the market.
 /// This struct has a custom implementation of PartialEq that allows us to take two swap pairs and use == on them
@@ -21,7 +25,17 @@ impl SwapPair {
         Self(a.into(), b.into())
     }
 }
+#[derive(Debug)]
+pub struct MarketOrder{
+    pub trade_request : TradeRequest,
+    pub user : User,
+}
 
+impl MarketOrder{
+    pub fn new(request : TradeRequest, user : User) -> Self{
+        Self{trade_request : request, user}
+    }
+}
 impl std::cmp::PartialEq for SwapPair {
     fn eq(&self, other: &Self) -> bool {
         (self.0 == other.0 && self.1 == other.1) || (self.1 == other.0 && self.0 == other.1)
@@ -48,62 +62,53 @@ impl std::fmt::Display for SwapPair {
 #[derive(Debug)]
 pub struct Market {
     pub swap_pair: SwapPair,
-    pub market_book: Arc<Mutex<Vec<TradeRequest>>>,
-    print_order_book_handle: JoinHandle<()>,
+    order_sender : SyncSender<MarketOrder>,
+    process_orders_handle : JoinHandle<()>,
 }
 
 pub trait MarketProcessor {
-    fn process_trade(&self, user: db::models::user::User, request: TradeRequest) -> Result<()>;
+    fn send_order(&self, market_order : MarketOrder) -> Result<()>;
 }
 
 impl Market {
     pub fn new(a: impl Into<String>, b: impl Into<String>) -> Self {
         let swap_pair = SwapPair(a.into(), b.into());
-        let market_book = Arc::new(Mutex::new(Vec::new()));
-        let print_order_book_handle = thread::spawn({
-            let market_book = market_book.clone();
+        let (order_sender, _order_receiver) = mpsc::sync_channel(100);
+
+    // Spawning a thread to consume orders from the channel
+        let process_orders_handle = thread::spawn({
+            let mut market_book =  Vec::new();
             let swap_pair = swap_pair.clone();
             move || loop {
-                {
-                    let guard = market_book.lock().unwrap();
+                if let Ok(order) = _order_receiver.recv(){
+                    print!("processing order");
+                    market_book.push(order);
+    
                     println!(
-                    "============\n\n\n===CURRENT MARKET BOOK for {:#}===\n\n{:#?}\n\n============",
-                    swap_pair, *guard
-                );
+                        "============\n\n\n===CURRENT MARKET BOOK for {:#}===\n\n{:#?}\n\n============",
+                        swap_pair, market_book
+                    );
                 }
-                thread::sleep(Duration::from_secs(10));
             }
         });
+
         Self {
             swap_pair,
-            market_book,
-            print_order_book_handle,
+            order_sender,
+            process_orders_handle
         }
     }
+
 }
 
 impl MarketProcessor for Market {
-    fn process_trade(&self, user: db::models::user::User, request: TradeRequest) -> Result<()> {
-        // convert from db user to trading user model
-        let user = super::models::user::User::from(user);
-        let _source_wallet = user.ledger.get(&request.symbol_source).ok_or_else(|| {
-            tonic::Status::not_found(format!(
-                "Wallet {} not found for user",
-                &request.symbol_source
-            ))
-        })?;
-        let _dest_wallet = user.ledger.get(&request.symbol_dest).ok_or_else(|| {
-            tonic::Status::not_found(format!(
-                "Wallet {} not found for user",
-                &request.symbol_dest
-            ))
-        })?;
-
-        let mut guard = self.market_book.lock().unwrap();
-        guard.push(request);
-
-        Ok(())
+    fn send_order(&self, market_order : MarketOrder) -> Result<()> {
+        
+        self.order_sender.send(market_order).map_err(|err| {
+            anyhow!("Failed to send order: {}", err)
+        })
     }
+
 }
 
 #[cfg(test)]

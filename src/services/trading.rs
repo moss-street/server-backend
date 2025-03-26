@@ -5,12 +5,15 @@ use rust_models::common::{
 };
 use tonic::Status;
 
+
+
 use crate::{
     db::models::user::User,
     http::dependencies::ServerDependencies,
     trading::{
         backend::TradeBackend,
-        market::{MarketProcessor, SwapPair},
+        market::{MarketProcessor, SwapPair, MarketOrder},
+        models::user::{User as trade_user, WalletOperations},
     },
 };
 
@@ -56,8 +59,16 @@ impl TradeService for TradeServiceImpl {
             .ok_or_else(|| {
                 Status::not_found(format!("Market for: {:#} does not exist", &swap_pair))
             })?;
+    
+        let user: trade_user = trade_user::from(user);
 
-        market.process_trade(user.clone(), create_trade_request.clone());
+        // Check if user has src and dst wallets, and also check if they have enough src amount
+        user.check_order_prereqs(create_trade_request.clone()).await?;
+
+        market.send_order(MarketOrder::new(create_trade_request.clone(), user)).unwrap_or_else(
+            |err| {
+                eprintln!("Error sending order to channel: {}", err); // TODO: Don't know
+        });
 
         // package up user and swap pair and send it to the market for processing
 
