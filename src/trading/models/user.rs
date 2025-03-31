@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use rust_models::common::TradeRequest;
 use tokio::sync::Mutex;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct User {
     pub _id: i32,
     pub _email: String,

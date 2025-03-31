@@ -12,7 +12,8 @@ use crate::{
     http::dependencies::ServerDependencies,
     trading::{
         backend::TradeBackend,
-        market::{MarketProcessor, SwapPair, MarketOrder},
+        market::{MarketProcessor, SwapPair},
+        models::market_order::MarketOrder,
         models::user::{User as trade_user, WalletOperations},
     },
 };
