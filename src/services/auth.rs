@@ -1,7 +1,6 @@
 use rust_models::common::{
-    authorization_service_server::AuthorizationService, UserCreateRequest, UserCreateResponse,
-    UserDeleteRequest, UserDeleteResponse, UserGetRequest, UserGetResponse, UserLoginRequest,
-    UserLoginResponse, UserUpdateRequest, UserUpdateResponse,
+    authorization_service_server::AuthorizationService, CreateUserRequest, CreateUserResponse,
+    LoginUserRequest, LoginUserResponse,
 };
 
 use tonic::Request;
@@ -31,8 +30,8 @@ impl AuthService {
 impl AuthorizationService for AuthService {
     async fn create_user(
         &self,
-        request: Request<UserCreateRequest>,
-    ) -> Result<tonic::Response<UserCreateResponse>, tonic::Status> {
+        request: Request<CreateUserRequest>,
+    ) -> Result<tonic::Response<CreateUserResponse>, tonic::Status> {
         let request = request.get_ref();
         let password_hash = Password::new(request.password.as_str()).map_err(|_| {
             tonic::Status::invalid_argument(
@@ -54,43 +53,22 @@ impl AuthorizationService for AuthService {
                     .db_manager
                     .insert_row(user::schema::users::table, &user)
                     .map_err(|e| tonic::Status::internal(format!("Server Error: {e}")))?;
-                Ok(tonic::Response::new(UserCreateResponse {
+                Ok(tonic::Response::new(CreateUserResponse {
                     status: 1,
                     message: format!("{:#?}", user_write_result),
                 }))
             }
-            Err(e) => Ok(tonic::Response::new(UserCreateResponse {
+            Err(e) => Ok(tonic::Response::new(CreateUserResponse {
                 status: 0,
                 message: format!("Failed to create user with error: {e:#}"),
             })),
         }
     }
 
-    async fn get_user(
-        &self,
-        _request: Request<UserGetRequest>,
-    ) -> Result<tonic::Response<UserGetResponse>, tonic::Status> {
-        todo!()
-    }
-
-    async fn update_user(
-        &self,
-        _request: Request<UserUpdateRequest>,
-    ) -> Result<tonic::Response<UserUpdateResponse>, tonic::Status> {
-        todo!()
-    }
-
-    async fn delete_user(
-        &self,
-        _request: Request<UserDeleteRequest>,
-    ) -> Result<tonic::Response<UserDeleteResponse>, tonic::Status> {
-        todo!()
-    }
-
     async fn login_user(
         &self,
-        request: Request<UserLoginRequest>,
-    ) -> Result<tonic::Response<UserLoginResponse>, tonic::Status> {
+        request: Request<LoginUserRequest>,
+    ) -> Result<tonic::Response<LoginUserResponse>, tonic::Status> {
         let request = request.get_ref();
 
         let user: Vec<crate::db::models::user::User> = self
@@ -120,7 +98,7 @@ impl AuthorizationService for AuthService {
                     })?,
             ));
 
-            Ok(tonic::Response::new(UserLoginResponse {
+            Ok(tonic::Response::new(LoginUserResponse {
                 status: 1,
                 user: Some(proto_user),
             }))
