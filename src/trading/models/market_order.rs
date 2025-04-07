@@ -1,6 +1,6 @@
+use crate::trading::market::Market;
 use rust_models::common::TradeRequest;
 use std::cmp::Ordering;
-use crate::trading::market::Market;
 
 use super::user::User;
 
@@ -8,7 +8,6 @@ use super::user::User;
 pub struct MarketOrder {
     pub trade_request: TradeRequest,
     pub user: User,
-    pub order: i64, // Used to break ties in priority
     pub rem_quantity: f64,
     pub is_buy: bool, // Determines Min-Heap (sells) or Max-Heap (buys)
 }
@@ -18,9 +17,8 @@ impl MarketOrder {
         Self {
             trade_request: request.clone(),
             user,
-            order : 0,
             rem_quantity: request.source_quantity,
-            is_buy : false,
+            is_buy: false,
         }
     }
 }
@@ -32,20 +30,16 @@ impl Ord for MarketOrder {
         match (self.trade_request.price, other.trade_request.price) {
             (Some(p1), Some(p2)) => {
                 let price_cmp = if self.is_buy {
-                    p2.partial_cmp(&p1).unwrap_or(Ordering::Equal) // MaxHeap for buys
+                    p2.partial_cmp(&p1).unwrap_or(Ordering::Less) // MaxHeap for buys
                 } else {
-                    p1.partial_cmp(&p2).unwrap_or(Ordering::Equal) // MinHeap for sells
+                    p1.partial_cmp(&p2).unwrap_or(Ordering::Greater) // MinHeap for sells
                 };
 
-                if price_cmp == Ordering::Equal {
-                    self.order.cmp(&other.order) // Break tie using order ID
-                } else {
-                    price_cmp
-                }
+                price_cmp
             }
-            (Some(_), None) => Ordering::Less,  // Market orders (None) are prioritized
+            (Some(_), None) => Ordering::Less, // Market orders (None) are prioritized
             (None, Some(_)) => Ordering::Greater,
-            (None, None) => self.order.cmp(&other.order), // If both are market orders, use order ID
+            (None, None) => Ordering::Equal, // If both are market orders, use order ID
         }
     }
 }

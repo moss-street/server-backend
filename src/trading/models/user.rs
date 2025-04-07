@@ -11,11 +11,11 @@ pub struct User {
     pub ledger: HashMap<String, Wallet>,
 }
 
-pub trait WalletOperations{
-    async fn check_order_prereqs(&self, request: TradeRequest) -> Result<(), tonic::Status> ;
+pub trait WalletOperations {
+    async fn check_order_prereqs(&self, request: TradeRequest) -> Result<(), tonic::Status>;
 }
 
-impl WalletOperations for User{
+impl WalletOperations for User {
     async fn check_order_prereqs(&self, request: TradeRequest) -> Result<(), tonic::Status> {
         let source_wallet = self.ledger.get(&request.symbol_source).ok_or_else(|| {
             tonic::Status::not_found(format!(
@@ -31,22 +31,23 @@ impl WalletOperations for User{
         })?;
 
         // Lock the mutex and check if the quantity is sufficient
-        let source_balance = source_wallet.quanity.try_lock().map_err(|_| {
-            tonic::Status::internal("Failed to lock source wallet quantity")
-        })?;
+        let source_balance = source_wallet
+            .quanity
+            .try_lock()
+            .map_err(|_| tonic::Status::internal("Failed to lock source wallet quantity"))?;
 
+        // TODO: This aint as simple as it looks. We need to check for limit order, otherwise we cant do this, also price * quantity and such
         if *source_balance < request.source_quantity {
             tonic::Status::failed_precondition(format!(
                 "Insufficient balance for {}: {} available, but {} was requested",
                 &request.symbol_source, *source_balance, &request.source_quantity
             ));
         }
+        else{
+            source_wallet.update_balance(UpdateIndicator::Subtract, request.source_quantity);
+        }
         Ok(())
-
-
     }
-
-    
 }
 
 impl From<crate::db::models::user::User> for User {
@@ -71,8 +72,8 @@ impl From<crate::db::models::user::User> for User {
 
 #[derive(Debug)]
 pub struct Wallet {
-    symbol: String,
-    quanity: Mutex<f64>,
+    pub symbol: String,
+    pub quanity: Mutex<f64>,
 }
 
 pub enum UpdateIndicator {
@@ -89,8 +90,8 @@ impl Wallet {
         }
     }
 
-    pub async fn check_sufficient_funds(&self, amt: f64) -> bool{
-        let wallet_quantity  = self.quanity.lock().await;
+    pub async fn check_sufficient_funds(&self, amt: f64) -> bool {
+        let wallet_quantity = self.quanity.lock().await;
         *wallet_quantity > amt
     }
 
