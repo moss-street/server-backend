@@ -168,7 +168,7 @@ impl TradeService for TradeServiceImpl {
             market
                 .send_order(MarketOrder::new(create_trade_request.clone(), user))
                 .unwrap_or_else(|err| {
-                    eprintln!("Error sending order to channel: {}", err); // TODO: Don't know
+                    eprintln!("Error sending order to channel: {}", err);
                 });
 
             // package up user and swap pair and send it to the market for processing

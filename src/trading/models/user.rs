@@ -45,8 +45,6 @@ impl WalletOperations for User {
 
 impl From<crate::db::models::user::User> for User {
     fn from(value: db_models::user::User) -> User {
-        // init with some default wallets for now
-        // TODO: REMOVE THESE ONCE WE HAVE A BETTER SYSTEM OF CREATING WALLETS FOR USERS
         let ledger = HashMap::from_iter(vec![
             ("USD".into(), Wallet::new("USD")),
             ("BTC".into(), Wallet::new("BTC")),
@@ -77,7 +75,6 @@ impl Wallet {
     pub fn new(symbol: impl Into<String>) -> Self {
         Self {
             symbol: symbol.into(),
-            // TODO: REMOVE THE DEFAULT 50 HERE. THIS IS JUST HERE FOR TESTING RIGHT NOW
             quanity: Mutex::new(50.0),
         }
     }
