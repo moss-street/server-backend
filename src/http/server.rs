@@ -7,8 +7,12 @@ use std::net::SocketAddr;
 use tonic::{Request, Status};
 
 use crate::{
-    services::{auth::AuthService, trading::TradeServiceImpl},
+    services::{
+        auth::AuthService,
+        trading::{TradeServiceImpl, UserTradeSubmissionGuard},
+    },
     session::manager::{SessionManager, SessionManagerImpl, SessionToken},
+    trading::{backend::TradeBackend, market::Market},
 };
 
 use super::dependencies::ServerDependencies;
@@ -21,8 +25,16 @@ pub struct Server {
 
 impl Server {
     pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
+        let mut trade_backend = TradeBackend::new();
+        let btc_usd_market = Market::new("USD", "BTC");
+        let eth_usd_market = Market::new("USD", "ETH");
+        trade_backend.add_market(btc_usd_market);
+        trade_backend.add_market(eth_usd_market);
+
         let auth_service = AuthService::new(dependencies.clone());
-        let trade_service = TradeServiceImpl::new(dependencies.clone());
+        let trade_submission_guard = UserTradeSubmissionGuard::default();
+        let trade_service =
+            TradeServiceImpl::new(dependencies.clone(), trade_backend, trade_submission_guard);
 
         let service = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(common::FILE_DESCRIPTOR_SET)
@@ -30,8 +42,10 @@ impl Server {
             .expect("Failed to create tonic reflecion");
 
         let session_manager = dependencies.session_manager;
-        let auth_interceptor =
-            { move |request: Request<()>| verify_auth(request, session_manager.clone()) };
+        let auth_interceptor = {
+            #[allow(clippy::result_large_err)]
+            move |request: Request<()>| verify_auth(request, session_manager.clone())
+        };
         let auth_server = AuthorizationServiceServer::new(auth_service);
         let trade_server = TradeServiceServer::with_interceptor(trade_service, auth_interceptor);
 
@@ -53,6 +67,7 @@ impl Server {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn verify_auth(
     mut req: Request<()>,
     session_manager: Arc<SessionManager>,
@@ -67,6 +82,10 @@ fn verify_auth(
         .get_session(SessionToken::from(token.to_owned()))
         .ok_or_else(|| tonic::Status::not_found("Invalid token"))?;
 
-    req.extensions_mut().insert(session);
+    let user = session_manager
+        .validate_session(session)
+        .ok_or_else(|| tonic::Status::unauthenticated("Token expired"))?;
+
+    req.extensions_mut().insert(user);
     Ok(req)
 }
