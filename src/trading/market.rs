@@ -89,9 +89,17 @@ impl Market {
     }
 
     #[cfg(test)]
-    fn book_depths(&self) -> (usize, usize) {
+    pub(crate) fn book_depths(&self) -> (usize, usize) {
         let engine = self.engine.lock().expect("engine lock should succeed");
         (engine.buy_book_len(), engine.sell_book_len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn send_order_and_collect_fills(
+        &self,
+        market_order: MarketOrder,
+    ) -> Result<Vec<Fill>> {
+        self.process_with_engine(market_order)
     }
 }
 
