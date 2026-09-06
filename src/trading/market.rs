@@ -1,14 +1,10 @@
-use std::{
-    sync::mpsc::{self, SyncSender},
-    thread::{self, JoinHandle},
-};
-
-use std::sync::mpsc::Receiver;
-
 use anyhow::{anyhow, Result};
+use std::sync::Mutex;
 
-use super::models::market_order::MarketOrder;
-use std::collections::BinaryHeap;
+use super::{
+    models::market_order::MarketOrder,
+    trade_engine::{Fill, TradeEngine},
+};
 
 /// A swap pair is the type of currency pairs that we are trading in the market.
 /// This struct has a custom implementation of PartialEq that allows us to take two swap pairs and use == on them
@@ -47,146 +43,102 @@ impl std::fmt::Display for SwapPair {
 #[derive(Debug)]
 pub struct Market {
     pub swap_pair: SwapPair,
-    order_sender: SyncSender<MarketOrder>,
-    _process_orders_handle: JoinHandle<()>,
+    engine: Mutex<TradeEngine>,
 }
 
 pub trait MarketProcessor {
     fn send_order(&self, market_order: MarketOrder) -> Result<()>;
-    #[allow(dead_code)]
-    fn process_transaction(&self, buyer: MarketOrder, seller: MarketOrder, ratio: f64);
 }
 
 impl Market {
     pub fn new(a: impl Into<String>, b: impl Into<String>) -> Self {
         let swap_pair = SwapPair(a.into(), b.into());
-        let (order_sender, _order_receiver): (SyncSender<MarketOrder>, Receiver<MarketOrder>) =
-            mpsc::sync_channel(100);
-
-        // Spawning a thread to consume orders from the channel
-        let process_orders_handle = thread::spawn({
-            let swap_pair = swap_pair.clone();
-            let mut src_buy_orders: Vec<MarketOrder> = Vec::new();
-            let src_sell_orders: Vec<MarketOrder> = Vec::new();
-            let mut finished_orders: Vec<MarketOrder> = Vec::new();
-            let _src_sell_limits: BinaryHeap<MarketOrder> = BinaryHeap::new();
-            let src_buy_limits: BinaryHeap<MarketOrder> = BinaryHeap::new();
-            let mut limit_counter: i64 = 0;
-
-            // sell 1 src at 45
-            // buy 1 src at 55
-
-            // 1 src = 50 dst
-            // 1 dst = 1/50 src
-            let market_price: f64 = 50.0;
-
-            move || loop {
-                if let Ok(mut order) = _order_receiver.recv() {
-                    print!("processing order");
-
-                    // This order is to sell the src symbol in exchange for the dst symbol
-                    if order.trade_request.symbol_source == swap_pair.0 {
-                        order.is_buy = false;
-
-                        // If the order is a limit order
-
-                        if let Some(price) = order.trade_request.price {
-                            // Assign the limit order a order number
-                            // In case we(the heap) have 2 with same price and need to determine prio
-                            order.order = limit_counter;
-                            limit_counter += 1;
-
-                            // Then we can sell it to both market and limit seller, gotta find highest
-                            let _market_buy_iter: std::iter::Peekable<_> =
-                                src_buy_orders.iter().peekable();
-
-                            loop {
-                                // Nice check to see if the order is fulfilled
-                                if order.rem_quantity == 0.0 {
-                                    finished_orders.push(order);
-                                    break;
-                                }
-
-                                // Do we have a buy limit?
-                                if let Some(sell_limit_order) = src_buy_limits.peek() {
-                                    // Then get its price
-                                    let best_limit_price =
-                                        sell_limit_order.trade_request.price.unwrap();
-
-                                    // If the buying limit is better than market (very sus, but possible)
-                                    if best_limit_price > market_price {
-                                        // And if the limit is better than asking price
-                                        if best_limit_price > price {}
-                                    }
-                                }
-                                if price <= market_price {}
-                            }
-                            // Compare price between market sell and limit sell
-
-                            // If the sell is still not fulfilled by market buyers
-                            // Then check limit orders that are cheaper than market_price
-                            // This is not really probable, but is an edge case
-                        }
-
-                        // src_sell_orders.push(order.clone());
-                    } else if order.trade_request.symbol_source == swap_pair.1 {
-                        order.is_buy = true;
-                        // order.rem_quantity /= ratio;
-                        src_buy_orders.push(order);
-                    }
-
-                    println!(
-                        "============\n\n\n===CURRENT MARKET BOOK for {:#}===\n\n{:#?}\n\n============{:#?}\n\n============",
-                        swap_pair, src_buy_orders, src_sell_orders
-                    );
-                }
-            }
-        });
-
         Self {
             swap_pair,
-            order_sender,
-            _process_orders_handle: process_orders_handle,
+            engine: Mutex::new(TradeEngine::new()),
         }
+    }
+
+    fn process_with_engine(&self, market_order: MarketOrder) -> Result<Vec<Fill>> {
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock market engine"))?;
+
+        let source_symbol = market_order.trade_request.symbol_source.as_str();
+        let price = market_order.trade_request.price;
+        let quantity = market_order.rem_quantity;
+
+        if source_symbol == self.swap_pair.0 {
+            Ok(match price {
+                Some(limit) => engine.submit_sell(quantity, limit),
+                None => engine.submit_market_sell(quantity),
+            })
+        } else if source_symbol == self.swap_pair.1 {
+            Ok(match price {
+                Some(limit) => engine.submit_buy(quantity, limit),
+                None => engine.submit_market_buy(quantity),
+            })
+        } else {
+            Err(anyhow!(
+                "Order source symbol {} is not part of market {}",
+                source_symbol,
+                self.swap_pair
+            ))
+        }
+    }
+
+    #[cfg(test)]
+    fn book_depths(&self) -> (usize, usize) {
+        let engine = self.engine.lock().expect("engine lock should succeed");
+        (engine.buy_book_len(), engine.sell_book_len())
     }
 }
 
 impl MarketProcessor for Market {
     fn send_order(&self, market_order: MarketOrder) -> Result<()> {
-        self.order_sender
-            .send(market_order)
-            .map_err(|err| anyhow!("Failed to send order: {}", err))
-    }
-
-    #[allow(dead_code)]
-    fn process_transaction(&self, mut buyer: MarketOrder, mut seller: MarketOrder, _ratio: f64) {
-        let transaction_qty = if buyer.rem_quantity == seller.rem_quantity {
-            let qty = buyer.rem_quantity;
-            buyer.rem_quantity = 0.0;
-            seller.rem_quantity = 0.0;
-            qty
-        } else if buyer.rem_quantity > seller.rem_quantity {
-            let qty = seller.rem_quantity;
-            buyer.rem_quantity -= qty;
-            seller.rem_quantity = 0.0;
-            qty
-        } else {
-            let qty = buyer.rem_quantity;
-            buyer.rem_quantity = 0.0;
-            seller.rem_quantity -= qty;
-            qty
-        };
-
-        let _ = transaction_qty;
-        // buyer.user.ledger.get(&buyer.trade_request.symbol_dest)
+        let _fills = self.process_with_engine(market_order)?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
+    use rust_models::common::{
+        trade_request::{TradeType, TransactionType},
+        TradeRequest,
+    };
     use std::collections::{HashMap, HashSet};
 
     use super::*;
+    use crate::trading::models::user::{User, Wallet};
+
+    fn fake_user() -> User {
+        User {
+            _id: 1,
+            _email: "market-test@example.com".into(),
+            ledger: HashMap::from([
+                ("USD".into(), Wallet::new("USD")),
+                ("BTC".into(), Wallet::new("BTC")),
+            ]),
+        }
+    }
+
+    fn order(source: &str, dest: &str, qty: f64, price: Option<f64>) -> MarketOrder {
+        MarketOrder::new(
+            TradeRequest {
+                trade_type: TradeType::Limit as i32,
+                transaction_type: TransactionType::Buy as i32,
+                symbol_source: source.to_string(),
+                symbol_dest: dest.to_string(),
+                source_quantity: qty,
+                price,
+                valid_from: None,
+                valid_to: None,
+            },
+            fake_user(),
+        )
+    }
 
     #[test]
     fn test_cmp() {
@@ -225,5 +177,47 @@ mod test {
         let removed = hm.insert(&b, b_val).unwrap();
         assert_eq!(removed, a_val);
         assert_eq!(*hm.get(&b).unwrap(), b_val);
+    }
+
+    #[test]
+    fn send_order_matches_crossing_orders() {
+        let market = Market::new("USD", "BTC");
+
+        market
+            .send_order(order("USD", "BTC", 5.0, Some(100.0)))
+            .expect("sell order should be accepted");
+        market
+            .send_order(order("BTC", "USD", 5.0, Some(100.0)))
+            .expect("buy order should be accepted");
+
+        assert_eq!(market.book_depths(), (0, 0));
+    }
+
+    #[test]
+    fn send_order_partial_fill_leaves_resting_quantity() {
+        let market = Market::new("USD", "BTC");
+
+        market
+            .send_order(order("USD", "BTC", 10.0, Some(100.0)))
+            .expect("sell order should be accepted");
+        market
+            .send_order(order("BTC", "USD", 6.0, Some(100.0)))
+            .expect("buy order should be accepted");
+
+        assert_eq!(market.book_depths(), (0, 1));
+    }
+
+    #[test]
+    fn send_order_non_crossing_orders_rest_on_book() {
+        let market = Market::new("USD", "BTC");
+
+        market
+            .send_order(order("USD", "BTC", 10.0, Some(100.0)))
+            .expect("sell order should be accepted");
+        market
+            .send_order(order("BTC", "USD", 5.0, Some(90.0)))
+            .expect("buy order should be accepted");
+
+        assert_eq!(market.book_depths(), (1, 1));
     }
 }
