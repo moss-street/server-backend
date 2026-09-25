@@ -8,9 +8,9 @@ use std::{
 
 use rust_models::common::{
     create_trade_response::CreateTradeStatus, delete_trade_response::DeleteTradeStatus,
-    get_trade_response::GetTradeStatus, trade_service_server::*, CreateTradeRequest,
-    CreateTradeResponse, DeleteTradeRequest, DeleteTradeResponse, GetTradeRequest,
-    GetTradeResponse, TradeId, TradeRequest,
+    get_trade_response::GetTradeStatus, trade_request::TradeType, trade_service_server::*,
+    CreateTradeRequest, CreateTradeResponse, DeleteTradeRequest, DeleteTradeResponse,
+    GetTradeRequest, GetTradeResponse, TradeId, TradeRequest,
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tonic::Status;
@@ -189,6 +189,52 @@ impl TradeServiceImpl {
     }
 }
 
+#[allow(clippy::result_large_err)]
+fn validate_trade_request(request: &TradeRequest) -> Result<(), Status> {
+    let trade_type = TradeType::try_from(request.trade_type)
+        .map_err(|_| Status::invalid_argument("Trade type is invalid"))?;
+
+    if trade_type == TradeType::Unspecified {
+        return Err(Status::invalid_argument("Trade type is required"));
+    }
+    if rust_models::common::trade_request::TransactionType::try_from(request.transaction_type)
+        .map(|transaction_type| {
+            transaction_type == rust_models::common::trade_request::TransactionType::Unspecified
+        })
+        .unwrap_or(true)
+    {
+        return Err(Status::invalid_argument("Transaction type is invalid"));
+    }
+    if request.symbol_source.trim().is_empty()
+        || request.symbol_dest.trim().is_empty()
+        || request.symbol_source == request.symbol_dest
+    {
+        return Err(Status::invalid_argument(
+            "Source and destination symbols must be distinct and non-empty",
+        ));
+    }
+    if !request.source_quantity.is_finite() || request.source_quantity <= 0.0 {
+        return Err(Status::invalid_argument(
+            "Source quantity must be a positive finite number",
+        ));
+    }
+
+    match (trade_type, request.price) {
+        (TradeType::Limit, Some(price)) if price.is_finite() && price > 0.0 => Ok(()),
+        (TradeType::Limit, None) => Err(Status::invalid_argument(
+            "Limit orders require a positive finite price",
+        )),
+        (TradeType::Limit, Some(_)) => Err(Status::invalid_argument(
+            "Limit orders require a positive finite price",
+        )),
+        (TradeType::Market, None) => Ok(()),
+        (TradeType::Market, Some(_)) => Err(Status::invalid_argument(
+            "Market orders must not include a price",
+        )),
+        (TradeType::Unspecified, _) => unreachable!(),
+    }
+}
+
 #[tonic::async_trait]
 impl TradeService for TradeServiceImpl {
     async fn create_trade(
@@ -216,6 +262,7 @@ impl TradeService for TradeServiceImpl {
                 .into_inner()
                 .trade_request
                 .ok_or_else(|| Status::invalid_argument("Trade request is required"))?;
+            validate_trade_request(&create_trade_request)?;
             // validate swap_pair is in the market
             let swap_pair = SwapPair::new(
                 create_trade_request.symbol_source.clone(),
@@ -354,6 +401,65 @@ mod tests {
             valid_from: None,
             valid_to: None,
         }
+    }
+
+    #[test]
+    fn trade_request_validation_accepts_market_and_limit_orders() {
+        let limit_request = fake_trade_request();
+        assert!(validate_trade_request(&limit_request).is_ok());
+
+        let mut market_request = fake_trade_request();
+        market_request.trade_type = TradeType::Market as i32;
+        market_request.price = None;
+        assert!(validate_trade_request(&market_request).is_ok());
+    }
+
+    #[test]
+    fn trade_request_validation_rejects_invalid_fields() {
+        fn assert_invalid(request: TradeRequest) {
+            assert_eq!(
+                validate_trade_request(&request)
+                    .expect_err("malformed trade request should be rejected")
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        let mut request = fake_trade_request();
+        request.source_quantity = 0.0;
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.source_quantity = f64::INFINITY;
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.price = Some(f64::NAN);
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.price = None;
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.trade_type = 99;
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.transaction_type = 99;
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.symbol_dest = request.symbol_source.clone();
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.symbol_source.clear();
+        assert_invalid(request);
+
+        let mut request = fake_trade_request();
+        request.trade_type = TradeType::Market as i32;
+        assert_invalid(request);
     }
 
     #[tokio::test]
