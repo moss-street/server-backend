@@ -28,4 +28,40 @@ impl TradeBackend {
     pub fn get_market(&self, swap_pair: SwapPair) -> Option<&Market> {
         self.markets.get(&swap_pair)
     }
+
+    #[allow(dead_code)]
+    pub fn has_market(&self, a: impl Into<String>, b: impl Into<String>) -> bool {
+        self.markets.contains_key(&SwapPair::new(a, b))
+    }
+
+    #[allow(dead_code)]
+    pub fn market_pairs(&self) -> Vec<SwapPair> {
+        self.markets.keys().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_tracks_multiple_markets_independently() {
+        let mut backend = TradeBackend::new();
+        backend.add_market(Market::new("USD", "BTC"));
+        backend.add_market(Market::new("ETH", "USD"));
+
+        assert!(backend.has_market("USD", "BTC"));
+        assert!(backend.has_market("BTC", "USD"));
+        assert!(backend.has_market("ETH", "USD"));
+        assert!(!backend.has_market("ETH", "BTC"));
+
+        let pairs = backend.market_pairs();
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs
+            .iter()
+            .any(|pair| pair == &SwapPair::new("USD", "BTC")));
+        assert!(pairs
+            .iter()
+            .any(|pair| pair == &SwapPair::new("ETH", "USD")));
+    }
 }
