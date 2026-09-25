@@ -192,10 +192,10 @@ mod test {
         let market = Market::new("USD", "BTC");
 
         market
-            .send_order(order("USD", "BTC", 5.0, Some(100.0)))
+            .send_order(order("USD", "BTC", 5.0, Some(2.0)))
             .expect("sell order should be accepted");
         market
-            .send_order(order("BTC", "USD", 5.0, Some(100.0)))
+            .send_order(order("BTC", "USD", 10.0, Some(0.6)))
             .expect("buy order should be accepted");
 
         assert_eq!(market.book_depths(), (0, 0));
@@ -206,10 +206,10 @@ mod test {
         let market = Market::new("USD", "BTC");
 
         market
-            .send_order(order("USD", "BTC", 10.0, Some(100.0)))
+            .send_order(order("USD", "BTC", 10.0, Some(2.0)))
             .expect("sell order should be accepted");
         market
-            .send_order(order("BTC", "USD", 6.0, Some(100.0)))
+            .send_order(order("BTC", "USD", 8.0, Some(0.6)))
             .expect("buy order should be accepted");
 
         assert_eq!(market.book_depths(), (0, 1));
@@ -220,10 +220,10 @@ mod test {
         let market = Market::new("USD", "BTC");
 
         market
-            .send_order(order("USD", "BTC", 10.0, Some(100.0)))
+            .send_order(order("USD", "BTC", 10.0, Some(2.0)))
             .expect("sell order should be accepted");
         market
-            .send_order(order("BTC", "USD", 5.0, Some(90.0)))
+            .send_order(order("BTC", "USD", 5.0, Some(0.4)))
             .expect("buy order should be accepted");
 
         assert_eq!(market.book_depths(), (1, 1));

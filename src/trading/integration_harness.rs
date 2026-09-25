@@ -145,32 +145,32 @@ mod tests {
 
         // Step 1: Seller posts 10 USD @ 100 BTC/USD equivalent.
         market
-            .send_order(limit_order(1, "USD", "BTC", 10.0, 100.0))
+            .send_order(limit_order(1, "USD", "BTC", 10.0, 2.0))
             .expect("sell order should be accepted");
         assert_eq!(market.book_depths(), (0, 1));
 
         // Step 2: Buyer posts non-crossing bid 3 BTC @ 90.
         market
-            .send_order(limit_order(2, "BTC", "USD", 3.0, 90.0))
+            .send_order(limit_order(2, "BTC", "USD", 3.0, 0.4))
             .expect("non-crossing buy should be accepted");
         assert_eq!(market.book_depths(), (1, 1));
 
         // Step 3: Crossing buy at 100 fills 4 units against resting sell.
         let fills = market
-            .send_order_and_collect_fills(limit_order(3, "BTC", "USD", 4.0, 100.0))
+            .send_order_and_collect_fills(limit_order(3, "BTC", "USD", 8.0, 0.6))
             .expect("crossing buy should execute");
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].quantity, 4.0);
-        assert_eq!(fills[0].price, 100.0);
+        assert_eq!(fills[0].price, 2.0);
         assert_eq!(market.book_depths(), (1, 1));
 
         // Step 4: Crossing buy at 110 consumes the remaining 6 units.
         let fills = market
-            .send_order_and_collect_fills(limit_order(4, "BTC", "USD", 6.0, 110.0))
+            .send_order_and_collect_fills(limit_order(4, "BTC", "USD", 12.0, 0.6))
             .expect("crossing buy should execute remaining sell quantity");
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].quantity, 6.0);
-        assert_eq!(fills[0].price, 100.0);
+        assert_eq!(fills[0].price, 2.0);
 
         // The non-crossing bid from step 2 should still be resting.
         assert_eq!(market.book_depths(), (1, 0));
