@@ -212,8 +212,10 @@ impl TradeService for TradeServiceImpl {
             })?;
 
         let result = async {
-            // Unwrap is fine since the trade_request being the request is validated by the server
-            let create_trade_request = request.into_inner().trade_request.unwrap();
+            let create_trade_request = request
+                .into_inner()
+                .trade_request
+                .ok_or_else(|| Status::invalid_argument("Trade request is required"))?;
             // validate swap_pair is in the market
             let swap_pair = SwapPair::new(
                 create_trade_request.symbol_source.clone(),
@@ -368,6 +370,45 @@ mod tests {
         assert_eq!(second.unwrap_err().code(), tonic::Code::FailedPrecondition);
 
         guard.release(42).await.expect("release should succeed");
+    }
+
+    #[tokio::test]
+    async fn create_trade_rejects_missing_trade_request_without_panicking() {
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        let pool = diesel::r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("sqlite pool should build for tests");
+        let dependencies = ServerDependencies::new(
+            Arc::new(DBManager::new(pool)),
+            Arc::new(SessionManager::default()),
+        );
+        let service = TradeServiceImpl::new(
+            dependencies,
+            TradeBackend::new(),
+            UserTradeSubmissionGuard::default(),
+        );
+        let mut request = tonic::Request::new(CreateTradeRequest {
+            trade_request: None,
+        });
+        request
+            .extensions_mut()
+            .insert(crate::db::models::user::User {
+                id: Some(42),
+                email: "user-42@example.com".to_string(),
+                password: "pw".to_string(),
+                first_name: "first".to_string(),
+                last_name: "last".to_string(),
+            });
+
+        let result = service.create_trade(request).await;
+
+        assert_eq!(
+            result
+                .expect_err("missing trade request should be rejected")
+                .code(),
+            tonic::Code::InvalidArgument
+        );
     }
 
     #[tokio::test]
