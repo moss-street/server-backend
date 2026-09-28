@@ -11,6 +11,7 @@ pub struct User {
     pub ledger: HashMap<String, Wallet>,
 }
 
+#[allow(dead_code)]
 pub trait WalletOperations {
     async fn check_order_prereqs(&self, request: TradeRequest) -> Result<(), tonic::Status>;
 }

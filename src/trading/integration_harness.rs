@@ -19,6 +19,7 @@ mod tests {
         services::trading::{TradeServiceImpl, UserTradeSubmissionGuard},
         session::manager::SessionManager,
         trading::backend::TradeBackend,
+        trading::ledger::AssetLedger,
     };
 
     use crate::trading::{
@@ -83,6 +84,13 @@ mod tests {
             Arc::new(DBManager::new(pool)),
             Arc::new(SessionManager::default()),
         );
+        let mut connection = dependencies
+            .db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
 
         let mut trade_backend = TradeBackend::new();
         trade_backend.add_market(Market::new("USD", "BTC"));

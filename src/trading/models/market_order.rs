@@ -13,11 +13,16 @@ pub struct MarketOrder {
 }
 
 impl MarketOrder {
+    #[allow(dead_code)]
     pub fn new(request: TradeRequest, user: User) -> Self {
+        Self::new_with_order_id(request, user, 0)
+    }
+
+    pub fn new_with_order_id(request: TradeRequest, user: User, order_id: i64) -> Self {
         Self {
             trade_request: request.clone(),
             user,
-            order: 0,
+            order: order_id,
             rem_quantity: request.source_quantity,
             is_buy: false,
         }

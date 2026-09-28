@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use anyhow::anyhow;
 use rust_models::common::{
     create_trade_response::CreateTradeStatus, delete_trade_response::DeleteTradeStatus,
     get_trade_response::GetTradeStatus, trade_request::TradeType, trade_service_server::*,
@@ -19,10 +20,8 @@ use crate::{
     db::models::user::User,
     http::dependencies::ServerDependencies,
     trading::{
-        backend::TradeBackend,
-        market::{MarketProcessor, SwapPair},
+        backend::TradeBackend, ledger::AssetLedger, market::SwapPair,
         models::market_order::MarketOrder,
-        models::user::{User as trade_user, WalletOperations},
     },
 };
 
@@ -170,6 +169,7 @@ impl TradeStateStore {
 pub struct TradeServiceImpl {
     _dependencies: ServerDependencies,
     trade_backend: TradeBackend,
+    asset_ledger: AssetLedger,
     trade_submission_guard: UserTradeSubmissionGuard,
     trade_state_store: TradeStateStore,
 }
@@ -180,9 +180,11 @@ impl TradeServiceImpl {
         trade_backend: TradeBackend,
         trade_submission_guard: UserTradeSubmissionGuard,
     ) -> Self {
+        let asset_ledger = AssetLedger::new(dependencies.db_manager.clone());
         Self {
             _dependencies: dependencies,
             trade_backend,
+            asset_ledger,
             trade_submission_guard,
             trade_state_store: TradeStateStore::default(),
         }
@@ -276,18 +278,51 @@ impl TradeService for TradeServiceImpl {
                     Status::not_found(format!("Market for: {:#} does not exist", swap_pair))
                 })?;
 
-            // transform the user from the tonic user to the internal user representation.
-            let user: trade_user = trade_user::from(user);
-
-            // Check if user has src and dst wallets, and also check if they have enough src amount
-            user.check_order_prereqs(create_trade_request.clone())
-                .await?;
-
-            market
-                .send_order(MarketOrder::new(create_trade_request.clone(), user))
-                .map_err(|err| Status::internal(format!("Error submitting order: {}", err)))?;
-
             let trade_id = self.trade_state_store.allocate_trade_id();
+            self.asset_ledger
+                .ensure_default_accounts(user_id)
+                .map_err(|err| {
+                    Status::internal(format!("Failed to initialize user assets: {err}"))
+                })?;
+            self.asset_ledger
+                .reserve_order(
+                    trade_id,
+                    user_id,
+                    &create_trade_request.symbol_source,
+                    &create_trade_request.symbol_dest,
+                    create_trade_request.source_quantity,
+                )
+                .map_err(|_| Status::failed_precondition("Insufficient source asset balance"))?;
+
+            let market_order = MarketOrder::new_with_order_id(
+                create_trade_request.clone(),
+                crate::trading::models::user::User::from(user),
+                i64::from(trade_id),
+            );
+            let submission = match market.submit_order_with_settlement(market_order, |fills| {
+                self.asset_ledger.settle_fills(fills)
+            }) {
+                Ok(submission) => submission,
+                Err(err) => {
+                    self.asset_ledger
+                        .refund_cancelled_order(trade_id, user_id)
+                        .map_err(|refund_err| {
+                            Status::internal(format!(
+                                "Order failed ({err}) and reservation cleanup failed ({refund_err})"
+                            ))
+                        })?;
+                    return Err(Status::internal(format!("Error submitting order: {err}")));
+                }
+            };
+
+            if !submission.rests_on_book && submission.remaining_quantity > 0.0 {
+                self.asset_ledger
+                    .refund_cancelled_order(trade_id, user_id)
+                    .map_err(|err| {
+                        Status::internal(format!("Failed to refund unfilled order amount: {err}"))
+                    })?;
+            }
+
             self.trade_state_store
                 .insert(trade_id, user_id, create_trade_request.clone())
                 .await;
@@ -359,7 +394,30 @@ impl TradeService for TradeServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Trade id is required"))?
             .trade_id;
 
-        let deleted = self.trade_state_store.delete_owned(trade_id, user_id).await;
+        let tracked_trade = self.trade_state_store.get_owned(trade_id, user_id).await;
+        let mut deleted = false;
+        if let Some(trade_request) = tracked_trade {
+            let swap_pair = SwapPair::new(
+                trade_request.symbol_source.clone(),
+                trade_request.symbol_dest.clone(),
+            );
+            let market = self
+                .trade_backend
+                .get_market(swap_pair)
+                .ok_or_else(|| Status::internal("Trade market is no longer available"))?;
+            market
+                .cancel_order_with_settlement(trade_id as u64, |_| {
+                    match self
+                        .asset_ledger
+                        .refund_cancelled_order(trade_id, user_id)?
+                    {
+                        Some(_) => Ok(()),
+                        None => Err(anyhow!("Active order reservation was not found")),
+                    }
+                })
+                .map_err(|err| Status::internal(format!("Failed to cancel order: {err}")))?;
+            deleted = self.trade_state_store.delete_owned(trade_id, user_id).await;
+        }
 
         let response = DeleteTradeResponse {
             status: if deleted {
@@ -518,6 +576,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deleting_resting_trade_refunds_reserved_source_balance() {
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        let pool = diesel::r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("sqlite pool should build for tests");
+        let dependencies = ServerDependencies::new(
+            Arc::new(DBManager::new(pool)),
+            Arc::new(SessionManager::default()),
+        );
+        let mut connection = dependencies
+            .db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
+
+        let ledger = AssetLedger::new(dependencies.db_manager.clone());
+        let mut trade_backend = TradeBackend::new();
+        trade_backend.add_market(Market::new("USD", "BTC"));
+        let service = TradeServiceImpl::new(
+            dependencies,
+            trade_backend,
+            UserTradeSubmissionGuard::default(),
+        );
+
+        let create = service
+            .create_trade({
+                let mut request = tonic::Request::new(CreateTradeRequest {
+                    trade_request: Some(fake_trade_request()),
+                });
+                request
+                    .extensions_mut()
+                    .insert(crate::db::models::user::User {
+                        id: Some(42),
+                        email: "user-42@example.com".to_string(),
+                        password: "pw".to_string(),
+                        first_name: "first".to_string(),
+                        last_name: "last".to_string(),
+                    });
+                request
+            })
+            .await
+            .expect("resting trade should be accepted")
+            .into_inner();
+        let trade_id = create
+            .trade_id
+            .expect("trade id should be returned")
+            .trade_id;
+
+        assert_eq!(ledger.balance(42, "USD").unwrap(), Some((45.0, 5.0)));
+
+        let delete = service
+            .delete_trade({
+                let mut request = tonic::Request::new(DeleteTradeRequest {
+                    trade_id: Some(TradeId { trade_id }),
+                });
+                request
+                    .extensions_mut()
+                    .insert(crate::db::models::user::User {
+                        id: Some(42),
+                        email: "user-42@example.com".to_string(),
+                        password: "pw".to_string(),
+                        first_name: "first".to_string(),
+                        last_name: "last".to_string(),
+                    });
+                request
+            })
+            .await
+            .expect("resting trade should be cancellable")
+            .into_inner();
+
+        assert_eq!(delete.status, DeleteTradeStatus::Ok as i32);
+        assert_eq!(ledger.balance(42, "USD").unwrap(), Some((50.0, 0.0)));
+    }
+
+    #[tokio::test]
     async fn different_users_can_submit_without_blocking_each_other() {
         let guard = UserTradeSubmissionGuard::new();
 
@@ -542,6 +678,13 @@ mod tests {
             Arc::new(DBManager::new(pool)),
             Arc::new(SessionManager::default()),
         );
+        let mut connection = dependencies
+            .db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
 
         let mut trade_backend = TradeBackend::new();
         trade_backend.add_market(Market::new("USD", "BTC"));

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use super::{
     models::market_order::MarketOrder,
-    trade_engine::{Fill, TradeEngine},
+    trade_engine::{Fill, OrderSubmission, TradeEngine},
 };
 
 /// A swap pair is the type of currency pairs that we are trading in the market.
@@ -46,6 +46,7 @@ pub struct Market {
     engine: Mutex<TradeEngine>,
 }
 
+#[allow(dead_code)]
 pub trait MarketProcessor {
     fn send_order(&self, market_order: MarketOrder) -> Result<()>;
 }
@@ -59,33 +60,69 @@ impl Market {
         }
     }
 
-    fn process_with_engine(&self, market_order: MarketOrder) -> Result<Vec<Fill>> {
+    pub fn submit_order_with_settlement(
+        &self,
+        market_order: MarketOrder,
+        settle: impl FnOnce(&[Fill]) -> Result<()>,
+    ) -> Result<OrderSubmission> {
         let mut engine = self
             .engine
             .lock()
             .map_err(|_| anyhow!("Failed to lock market engine"))?;
+        let mut candidate = engine.clone();
 
         let source_symbol = market_order.trade_request.symbol_source.as_str();
         let price = market_order.trade_request.price;
         let quantity = market_order.rem_quantity;
+        let order_id = u64::try_from(market_order.order)
+            .map_err(|_| anyhow!("Order id cannot be negative"))?;
 
-        if source_symbol == self.swap_pair.0 {
-            Ok(match price {
-                Some(limit) => engine.submit_sell(quantity, limit),
-                None => engine.submit_market_sell(quantity),
-            })
+        let submission = if source_symbol == self.swap_pair.0 {
+            match price {
+                Some(limit) => candidate.submit_sell_with_id(order_id, quantity, limit),
+                None => candidate.submit_market_sell_with_id(order_id, quantity),
+            }
         } else if source_symbol == self.swap_pair.1 {
-            Ok(match price {
-                Some(limit) => engine.submit_buy(quantity, limit),
-                None => engine.submit_market_buy(quantity),
-            })
+            match price {
+                Some(limit) => candidate.submit_buy_with_id(order_id, quantity, limit),
+                None => candidate.submit_market_buy_with_id(order_id, quantity),
+            }
         } else {
             Err(anyhow!(
                 "Order source symbol {} is not part of market {}",
                 source_symbol,
                 self.swap_pair
-            ))
-        }
+            ))?
+        };
+
+        settle(&submission.fills)?;
+        *engine = candidate;
+        Ok(submission)
+    }
+
+    pub fn cancel_order_with_settlement(
+        &self,
+        order_id: u64,
+        settle: impl FnOnce(&super::models::internal_order::InternalOrder) -> Result<()>,
+    ) -> Result<Option<super::models::internal_order::InternalOrder>> {
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock market engine"))?;
+        let mut candidate = engine.clone();
+        let Some(cancelled) = candidate.cancel_order(order_id) else {
+            return Ok(None);
+        };
+
+        settle(&cancelled)?;
+        *engine = candidate;
+        Ok(Some(cancelled))
+    }
+
+    #[allow(dead_code)]
+    fn process_with_engine(&self, market_order: MarketOrder) -> Result<Vec<Fill>> {
+        self.submit_order_with_settlement(market_order, |_| Ok(()))
+            .map(|submission| submission.fills)
     }
 
     #[cfg(test)]
