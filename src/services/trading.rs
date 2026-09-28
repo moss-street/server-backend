@@ -11,7 +11,8 @@ use rust_models::common::{
     create_trade_response::CreateTradeStatus, delete_trade_response::DeleteTradeStatus,
     get_trade_response::GetTradeStatus, trade_request::TradeType, trade_service_server::*,
     CreateTradeRequest, CreateTradeResponse, DeleteTradeRequest, DeleteTradeResponse,
-    GetTradeRequest, GetTradeResponse, TradeId, TradeRequest,
+    GetTradeRequest, GetTradeResponse, GetWalletBalanceRequest, GetWalletBalanceResponse, TradeId,
+    TradeRequest,
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tonic::Status;
@@ -430,6 +431,43 @@ impl TradeService for TradeServiceImpl {
 
         Ok(tonic::Response::new(response))
     }
+
+    async fn get_wallet_balance(
+        &self,
+        request: tonic::Request<GetWalletBalanceRequest>,
+    ) -> Result<tonic::Response<GetWalletBalanceResponse>, tonic::Status> {
+        let user = request
+            .extensions()
+            .get::<User>()
+            .ok_or_else(|| Status::not_found("User not found"))?;
+        let user_id = user.id.ok_or_else(|| Status::internal("User id missing"))?;
+        let wallet_request = request.into_inner();
+
+        self.asset_ledger
+            .ensure_default_accounts(user_id)
+            .map_err(|err| Status::internal(format!("Failed to initialize user assets: {err}")))?;
+        let balance = self
+            .asset_ledger
+            .balance(user_id, &wallet_request.symbol)
+            .map_err(|err| Status::internal(format!("Failed to load wallet balance: {err}")))?;
+
+        let (status, balance) = match balance {
+            Some((available, _reserved)) => (
+                rust_models::common::get_wallet_balance_response::GetWalletBalanceStatus::Ok,
+                available,
+            ),
+            None => (
+                rust_models::common::get_wallet_balance_response::GetWalletBalanceStatus::NotFound,
+                0.0,
+            ),
+        };
+
+        Ok(tonic::Response::new(GetWalletBalanceResponse {
+            status: status.into(),
+            request: Some(wallet_request),
+            balance,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -651,6 +689,85 @@ mod tests {
 
         assert_eq!(delete.status, DeleteTradeStatus::Ok as i32);
         assert_eq!(ledger.balance(42, "USD").unwrap(), Some((50.0, 0.0)));
+    }
+
+    #[tokio::test]
+    async fn wallet_balance_rpc_returns_available_balance_and_not_found_status() {
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        let pool = diesel::r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("sqlite pool should build for tests");
+        let dependencies = ServerDependencies::new(
+            Arc::new(DBManager::new(pool)),
+            Arc::new(SessionManager::default()),
+        );
+        let mut connection = dependencies
+            .db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
+
+        let service = TradeServiceImpl::new(
+            dependencies,
+            TradeBackend::new(),
+            UserTradeSubmissionGuard::default(),
+        );
+        let mut balance_request = tonic::Request::new(GetWalletBalanceRequest {
+            symbol: "USD".to_string(),
+        });
+        balance_request
+            .extensions_mut()
+            .insert(crate::db::models::user::User {
+                id: Some(73),
+                email: "user-73@example.com".to_string(),
+                password: "pw".to_string(),
+                first_name: "first".to_string(),
+                last_name: "last".to_string(),
+            });
+
+        let balance = service
+            .get_wallet_balance(balance_request)
+            .await
+            .expect("wallet lookup should succeed")
+            .into_inner();
+
+        assert_eq!(
+            balance.status,
+            rust_models::common::get_wallet_balance_response::GetWalletBalanceStatus::Ok as i32
+        );
+        assert_eq!(balance.balance, 50.0);
+        assert_eq!(
+            balance.request.expect("request should be echoed").symbol,
+            "USD"
+        );
+
+        let mut missing_request = tonic::Request::new(GetWalletBalanceRequest {
+            symbol: "DOGE".to_string(),
+        });
+        missing_request
+            .extensions_mut()
+            .insert(crate::db::models::user::User {
+                id: Some(73),
+                email: "user-73@example.com".to_string(),
+                password: "pw".to_string(),
+                first_name: "first".to_string(),
+                last_name: "last".to_string(),
+            });
+
+        let missing = service
+            .get_wallet_balance(missing_request)
+            .await
+            .expect("unknown wallet should return a response status")
+            .into_inner();
+        assert_eq!(
+            missing.status,
+            rust_models::common::get_wallet_balance_response::GetWalletBalanceStatus::NotFound
+                as i32
+        );
+        assert_eq!(missing.balance, 0.0);
     }
 
     #[tokio::test]
