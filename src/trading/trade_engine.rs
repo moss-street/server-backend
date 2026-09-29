@@ -182,7 +182,7 @@ impl TradeEngine {
                     left_price
                         .partial_cmp(&right_price)
                         .unwrap_or(Ordering::Equal)
-                        .then_with(|| left.order_id.cmp(&right.order_id))
+                        .then_with(|| right.order_id.cmp(&left.order_id))
                 })
                 .map(|(index, _)| index),
         }
