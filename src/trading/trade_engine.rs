@@ -169,7 +169,7 @@ impl TradeEngine {
                     left_price
                         .partial_cmp(&right_price)
                         .unwrap_or(Ordering::Equal)
-                        .then_with(|| left.order_id.cmp(&right.order_id))
+                        .then_with(|| right.order_id.cmp(&left.order_id))
                 })
                 .map(|(index, _)| index),
             OrderSide::Sell => orders
@@ -287,6 +287,18 @@ mod tests {
         assert_eq!(fill.taker_source_quantity, 4.0);
         assert_eq!(submission.remaining_quantity, 2.0);
         assert!(submission.rests_on_book);
+    }
+
+    #[test]
+    fn sell_matches_oldest_equal_price_buy_order_first() {
+        let mut engine = TradeEngine::new();
+        engine.submit_buy_with_id(1, 5.0, 0.5);
+        engine.submit_buy_with_id(2, 5.0, 0.5);
+
+        let submission = engine.submit_sell_with_id(3, 2.0, 3.0);
+
+        assert_eq!(submission.fills.len(), 1);
+        assert_eq!(submission.fills[0].maker_order_id, 1);
     }
 
     #[test]
