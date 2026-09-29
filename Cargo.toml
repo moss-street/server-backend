@@ -12,11 +12,6 @@ crate-type = ["lib"]
 name = "backend"
 path = "src/bin/main.rs"
 
-[dependencies.rusqlite]
-version = "0.32.0"
-features = ["bundled"]
-
-
 [dependencies]
 anyhow = "1.0.95"
 async-trait = "0.1.85"
@@ -24,14 +19,12 @@ tokio = { version = "1.42.0", features = ["full", "test-util"] }
 tonic = "0.12.3"
 prost = "0.13.4"
 tonic-reflection = "0.12.3"
-tower-http = "0.6.2"
-tonic-web = "0.12.3"
 prost-types = "0.13.4"
-moss-street-api-models = { git = "https://github.com/moss-street/api-models/", version = "0.1.0" }
-r2d2_sqlite = "0.25.0"
+moss-street-api-models = { git = "https://github.com/moss-street/api-models/", tag = "v0.1.4", version = "0.1.0" }
 r2d2 = "0.8.10"
 derive_builder = "0.20.2"
 bcrypt = "0.16.0"
 chrono = "0.4.39"
 diesel = { version = "2.2", features = ["r2d2", "sqlite", "chrono"] }
 clap = { version = "4.5.27", features = ["derive"] }
+

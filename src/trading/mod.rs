@@ -1,2 +1,9 @@
+pub(crate) mod models;
+
 pub(crate) mod backend;
+pub(crate) mod ledger;
 pub(crate) mod market;
+pub(crate) mod trade_engine;
+
+#[cfg(test)]
+mod integration_harness;

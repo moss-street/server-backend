@@ -101,10 +101,8 @@ impl DatabaseImpl for DBManager {
         <U as Insertable<T>>::Values: QueryFragment<Sqlite> + QueryId + Send,
         InsertStatement<T, <U as Insertable<T>>::Values>: ExecuteDsl<SqliteConnection>,
     {
-        // A janky way of inserting bulk rows iteratively calling insert_row
-        // Ideally this would be it's own function which can do a bulk insert but rust
-        // is hard.
-        // TODO: when someone with skill can, make this bulk insert objs with one query
+        // A janky way of inserting bulk rows iteratively calling insert_row.
+        // This remains intentionally simple until a dedicated bulk-insert path is needed.
         Ok(objs
             .iter()
             .map(|o| {

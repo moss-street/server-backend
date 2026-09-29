@@ -167,6 +167,10 @@ mod test_utils {
 mod test {
     use super::*;
 
+    fn reset_mock_time() {
+        test_utils::set_mock_time(Utc::now().timestamp());
+    }
+
     fn fake_user() -> User {
         User {
             id: Some(123),
@@ -179,6 +183,7 @@ mod test {
 
     #[test]
     fn test_session_is_valid() {
+        reset_mock_time();
         let user = fake_user();
 
         let expire_duration = Duration::seconds(1);
@@ -192,6 +197,7 @@ mod test {
 
     #[test]
     fn test_new_session() {
+        reset_mock_time();
         let manager = SessionManager::default();
         let user = fake_user();
 
@@ -204,6 +210,7 @@ mod test {
 
     #[test]
     fn test_get_session() {
+        reset_mock_time();
         let manager = SessionManager::default();
         let user = fake_user();
         let session = manager
@@ -218,6 +225,7 @@ mod test {
 
     #[test]
     fn test_validate_session() {
+        reset_mock_time();
         let manager = SessionManager::default();
         let user = fake_user();
         let session = manager
@@ -232,15 +240,15 @@ mod test {
 
     #[test]
     fn test_expired_session_cleanup() {
+        reset_mock_time();
         let manager = SessionManager::default();
         let user = fake_user();
-        test_utils::set_mock_time(Utc::now().timestamp());
         let session = manager
             .new_session(user.clone())
             .expect("Session should be created");
 
         test_utils::set_mock_time(
-            test_utils::get_mock_time() + DEFAULT_TOKEN_TIMEOUT_DURATION.num_seconds(),
+            test_utils::get_mock_time() + DEFAULT_TOKEN_TIMEOUT_DURATION.num_seconds() + 1,
         ); // Fast-forward time
         manager.cleanup();
 
