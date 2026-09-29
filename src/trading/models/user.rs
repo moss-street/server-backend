@@ -82,7 +82,7 @@ impl Wallet {
 
     pub async fn check_sufficient_funds(&self, amt: f64) -> bool {
         let wallet_quantity = self.quanity.lock().await;
-        *wallet_quantity > amt
+*wallet_quantity >= amt
     }
 
     pub async fn update_balance(&self, ui: UpdateIndicator, amt: f64) {
