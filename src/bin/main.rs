@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let _ = User::initialize_database(&mut connection);
     let _ = Stock::initialize_database(&mut connection);
     let _ = Wallet::initialize_database(&mut connection);
-    let _ = AssetLedger::initialize_database(&mut connection);
+    AssetLedger::initialize_database(&mut connection)?;
 
     let session_manager = Arc::new(SessionManager::default());
 
