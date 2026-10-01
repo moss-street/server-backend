@@ -37,8 +37,9 @@ partially initialized users can trade. Account, auth, reservation, submission,
 and cancellation lifecycle events must remain logged with `tracing`.
 
 `TradeStateStore` and order books are intentionally in memory today, so active
-orders and trade lookup state are lost after restart. Persisting and restoring
-them, including reservation reconciliation, remains a tracked follow-up.
+orders and trade lookup state are lost after restart. Startup refunds their
+orphaned SQLite reservations and seeds new trade IDs above persisted reservation
+IDs. Persisting and restoring those objects remains a tracked follow-up.
 
 ## Invariants
 

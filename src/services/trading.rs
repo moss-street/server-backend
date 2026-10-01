@@ -121,14 +121,18 @@ struct TradeStateStore {
 
 impl Default for TradeStateStore {
     fn default() -> Self {
-        Self {
-            next_trade_id: Arc::new(AtomicI32::new(1)),
-            trades: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self::with_next_trade_id(1)
     }
 }
 
 impl TradeStateStore {
+    fn with_next_trade_id(next_trade_id: i32) -> Self {
+        Self {
+            next_trade_id: Arc::new(AtomicI32::new(next_trade_id)),
+            trades: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
     fn allocate_trade_id(&self) -> i32 {
         self.next_trade_id.fetch_add(1, Ordering::SeqCst)
     }
@@ -181,15 +185,24 @@ impl TradeServiceImpl {
         dependencies: ServerDependencies,
         trade_backend: TradeBackend,
         trade_submission_guard: UserTradeSubmissionGuard,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let asset_ledger = AssetLedger::new(dependencies.db_manager.clone());
-        Self {
+        let refunded_reservations = asset_ledger.reconcile_orphaned_reservations()?;
+        if refunded_reservations > 0 {
+            warn!(
+                refunded_reservations,
+                "Refunded reservations orphaned by an in-memory order book restart"
+            );
+        }
+        let next_trade_id = asset_ledger.next_order_id()?;
+
+        Ok(Self {
             _dependencies: dependencies,
             trade_backend,
             asset_ledger,
             trade_submission_guard,
-            trade_state_store: TradeStateStore::default(),
-        }
+            trade_state_store: TradeStateStore::with_next_trade_id(next_trade_id),
+        })
     }
 }
 
@@ -619,11 +632,19 @@ mod tests {
             Arc::new(DBManager::new(pool)),
             Arc::new(SessionManager::default()),
         );
+        let mut connection = dependencies
+            .db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
         let service = TradeServiceImpl::new(
             dependencies,
             TradeBackend::new(),
             UserTradeSubmissionGuard::default(),
-        );
+        )
+        .expect("trade service should initialize");
         let mut request = tonic::Request::new(CreateTradeRequest {
             trade_request: None,
         });
@@ -673,7 +694,8 @@ mod tests {
             dependencies,
             trade_backend,
             UserTradeSubmissionGuard::default(),
-        );
+        )
+        .expect("trade service should initialize");
 
         let create = service
             .create_trade({
@@ -748,7 +770,8 @@ mod tests {
             dependencies,
             TradeBackend::new(),
             UserTradeSubmissionGuard::default(),
-        );
+        )
+        .expect("trade service should initialize");
         let mut balance_request = tonic::Request::new(GetWalletBalanceRequest {
             symbol: "USD".to_string(),
         });
@@ -845,7 +868,8 @@ mod tests {
             dependencies,
             trade_backend,
             UserTradeSubmissionGuard::default(),
-        );
+        )
+        .expect("trade service should initialize");
 
         let mut first_request = tonic::Request::new(CreateTradeRequest {
             trade_request: Some(TradeRequest {

@@ -24,7 +24,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Self {
+    pub async fn new(addr: SocketAddr, dependencies: ServerDependencies) -> Result<Self> {
         let mut trade_backend = TradeBackend::new();
         let btc_usd_market = Market::new("USD", "BTC");
         let eth_usd_market = Market::new("USD", "ETH");
@@ -34,7 +34,7 @@ impl Server {
         let auth_service = AuthService::new(dependencies.clone());
         let trade_submission_guard = UserTradeSubmissionGuard::default();
         let trade_service =
-            TradeServiceImpl::new(dependencies.clone(), trade_backend, trade_submission_guard);
+            TradeServiceImpl::new(dependencies.clone(), trade_backend, trade_submission_guard)?;
 
         let service = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(common::FILE_DESCRIPTOR_SET)
@@ -61,9 +61,9 @@ impl Server {
             }
         });
 
-        Server {
+        Ok(Server {
             server_handle: handle,
-        }
+        })
     }
 }
 

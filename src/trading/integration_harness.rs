@@ -100,6 +100,7 @@ mod tests {
             trade_backend,
             UserTradeSubmissionGuard::default(),
         )
+        .expect("trade service should initialize")
     }
 
     fn lifecycle_trade_request(

@@ -24,3 +24,7 @@ info logs. Override the filter with `RUST_LOG` when starting the server:
 RUST_LOG='info,moss_street_libs=debug,backend=debug' \
 cargo run --bin backend -- --ip 127.0.0.1 --port 8080 --database-uri local.db
 ```
+
+Because the active order book is in memory, server startup refunds any active
+SQLite reservations that cannot be restored into the new empty book. It also
+allocates new trade IDs above the highest persisted reservation ID.

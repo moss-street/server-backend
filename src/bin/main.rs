@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let addr = ip.parse()?;
     info!(%addr, "Starting backend server");
 
-    let server = Server::new(addr, dependencies).await;
+    let server = Server::new(addr, dependencies).await?;
     async move {
         server
             .server_handle

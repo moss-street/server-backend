@@ -35,6 +35,24 @@ struct OrderReservation {
     remaining_source: f64,
 }
 
+#[derive(Debug, QueryableByName)]
+struct ActiveOrderReservation {
+    #[diesel(sql_type = Integer)]
+    order_id: i32,
+    #[diesel(sql_type = Integer)]
+    user_id: i32,
+    #[diesel(sql_type = Text)]
+    source_symbol: String,
+    #[diesel(sql_type = Double)]
+    remaining_source: f64,
+}
+
+#[derive(Debug, QueryableByName)]
+struct MaximumOrderId {
+    #[diesel(sql_type = Integer)]
+    maximum_order_id: i32,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, QueryableByName)]
 struct AssetBalance {
@@ -141,6 +159,57 @@ impl AssetLedger {
             .execute(connection)?;
             Ok(())
         })
+    }
+
+    pub fn reconcile_orphaned_reservations(&self) -> Result<usize> {
+        let mut connection = self.db_manager.connection_pool.get()?;
+        connection.transaction::<_, anyhow::Error, _>(|connection| {
+            let reservations = sql_query(
+                "SELECT order_id, user_id, source_symbol, remaining_source \
+                 FROM order_reservations WHERE active = 1",
+            )
+            .load::<ActiveOrderReservation>(connection)?;
+
+            for reservation in &reservations {
+                let balance_updated = sql_query(
+                    "UPDATE asset_balances \
+                     SET available = available + ?, reserved = MAX(reserved - ?, 0) \
+                     WHERE user_id = ? AND asset_symbol = ?",
+                )
+                .bind::<Double, _>(reservation.remaining_source)
+                .bind::<Double, _>(reservation.remaining_source)
+                .bind::<Integer, _>(reservation.user_id)
+                .bind::<Text, _>(&reservation.source_symbol)
+                .execute(connection)?;
+                if balance_updated != 1 {
+                    return Err(anyhow!(
+                        "Missing source balance while reconciling order {}",
+                        reservation.order_id
+                    ));
+                }
+
+                sql_query(
+                    "UPDATE order_reservations \
+                     SET remaining_source = 0, active = 0 WHERE order_id = ?",
+                )
+                .bind::<Integer, _>(reservation.order_id)
+                .execute(connection)?;
+            }
+
+            Ok(reservations.len())
+        })
+    }
+
+    pub fn next_order_id(&self) -> Result<i32> {
+        let mut connection = self.db_manager.connection_pool.get()?;
+        let maximum = sql_query(
+            "SELECT COALESCE(MAX(order_id), 0) AS maximum_order_id FROM order_reservations",
+        )
+        .get_result::<MaximumOrderId>(&mut *connection)?;
+        maximum
+            .maximum_order_id
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("Order id capacity has been exhausted"))
     }
 
     pub fn settle_fills(&self, fills: &[Fill]) -> Result<()> {
@@ -345,5 +414,21 @@ mod tests {
         let ledger = build_ledger();
         assert!(ledger.reserve_order(21, 1, "USD", "BTC", 51.0).is_err());
         assert_eq!(ledger.balance(1, "USD").unwrap(), Some((50.0, 0.0)));
+    }
+
+    #[test]
+    fn restart_reconciliation_refunds_active_reservations_and_advances_order_ids() {
+        let ledger = build_ledger();
+        ledger
+            .reserve_order(41, 1, "USD", "BTC", 12.0)
+            .expect("order should reserve funds");
+
+        assert_eq!(ledger.reconcile_orphaned_reservations().unwrap(), 1);
+        assert_eq!(ledger.balance(1, "USD").unwrap(), Some((50.0, 0.0)));
+        assert_eq!(ledger.next_order_id().unwrap(), 42);
+
+        ledger
+            .reserve_order(42, 1, "USD", "BTC", 1.0)
+            .expect("next order id should not collide with persisted reservations");
     }
 }
