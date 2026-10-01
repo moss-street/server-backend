@@ -73,7 +73,7 @@ mod tests {
         }
     }
 
-    fn build_trade_service() -> TradeServiceImpl {
+    fn build_trade_service() -> (TradeServiceImpl, AssetLedger) {
         let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
         let pool = diesel::r2d2::Pool::builder()
             .max_size(1)
@@ -95,12 +95,16 @@ mod tests {
         let mut trade_backend = TradeBackend::new();
         trade_backend.add_market(Market::new("USD", "BTC"));
 
-        TradeServiceImpl::new(
-            dependencies,
-            trade_backend,
-            UserTradeSubmissionGuard::default(),
+        let ledger = AssetLedger::new(dependencies.db_manager.clone());
+        (
+            TradeServiceImpl::new(
+                dependencies,
+                trade_backend,
+                UserTradeSubmissionGuard::default(),
+            )
+            .expect("trade service should initialize"),
+            ledger,
         )
-        .expect("trade service should initialize")
     }
 
     fn lifecycle_trade_request(
@@ -196,7 +200,10 @@ mod tests {
 
     #[tokio::test]
     async fn harness_tracks_trade_lifecycle_through_service() {
-        let service = build_trade_service();
+        let (service, ledger) = build_trade_service();
+        ledger
+            .add_funds(77, "USD", 4.0)
+            .expect("trader should be funded");
 
         let create = service
             .create_trade(create_trade_request(

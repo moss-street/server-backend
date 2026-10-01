@@ -28,3 +28,6 @@ cargo run --bin backend -- --ip 127.0.0.1 --port 8080 --database-uri local.db
 Because the active order book is in memory, server startup refunds any active
 SQLite reservations that cannot be restored into the new empty book. It also
 allocates new trade IDs above the highest persisted reservation ID.
+
+New users start with no funded assets. Credit an account through the
+authenticated `TradeService.AddFunds` RPC before submitting an order.

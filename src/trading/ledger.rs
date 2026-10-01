@@ -13,8 +13,6 @@ use diesel::{
 
 use crate::{db::manager::DBManager, trading::trade_engine::Fill};
 
-const DEFAULT_ASSETS: [&str; 3] = ["USD", "BTC", "ETH"];
-const DEFAULT_BALANCE: f64 = 50.0;
 const BALANCE_EPSILON: f64 = 1e-9;
 
 #[allow(dead_code)]
@@ -93,27 +91,50 @@ impl AssetLedger {
         Ok(())
     }
 
-    pub fn ensure_default_accounts(&self, user_id: i32) -> Result<()> {
+    pub fn add_funds(&self, user_id: i32, asset_symbol: &str, amount: f64) -> Result<f64> {
+        if asset_symbol.trim().is_empty() {
+            return Err(anyhow!("Asset symbol is required"));
+        }
+        if !amount.is_finite() || amount <= 0.0 {
+            return Err(anyhow!("Funding amount must be a positive finite number"));
+        }
+
         let mut connection = self.db_manager.connection_pool.get()?;
         connection.transaction::<_, anyhow::Error, _>(|connection| {
-            Self::ensure_default_accounts_in_connection(connection, user_id)
+            sql_query(
+                "INSERT INTO asset_balances (user_id, asset_symbol, available, reserved) \
+                 VALUES (?, ?, ?, 0) \
+                 ON CONFLICT(user_id, asset_symbol) \
+                 DO UPDATE SET available = available + excluded.available",
+            )
+            .bind::<Integer, _>(user_id)
+            .bind::<Text, _>(asset_symbol)
+            .bind::<Double, _>(amount)
+            .execute(connection)?;
+
+            let balance = sql_query(
+                "SELECT available, reserved FROM asset_balances \
+                 WHERE user_id = ? AND asset_symbol = ?",
+            )
+            .bind::<Integer, _>(user_id)
+            .bind::<Text, _>(asset_symbol)
+            .get_result::<AssetBalance>(connection)?;
+            Ok(balance.available)
         })
     }
 
-    pub fn ensure_default_accounts_in_connection(
+    fn ensure_asset_account_in_connection(
         connection: &mut SqliteConnection,
         user_id: i32,
+        asset_symbol: &str,
     ) -> Result<()> {
-        for asset in DEFAULT_ASSETS {
-            sql_query(
-                "INSERT OR IGNORE INTO asset_balances \
-                 (user_id, asset_symbol, available, reserved) VALUES (?, ?, ?, 0)",
-            )
-            .bind::<Integer, _>(user_id)
-            .bind::<Text, _>(asset)
-            .bind::<Double, _>(DEFAULT_BALANCE)
-            .execute(connection)?;
-        }
+        sql_query(
+            "INSERT OR IGNORE INTO asset_balances \
+             (user_id, asset_symbol, available, reserved) VALUES (?, ?, 0, 0)",
+        )
+        .bind::<Integer, _>(user_id)
+        .bind::<Text, _>(asset_symbol)
+        .execute(connection)?;
         Ok(())
     }
 
@@ -127,7 +148,7 @@ impl AssetLedger {
     ) -> Result<()> {
         let mut connection = self.db_manager.connection_pool.get()?;
         connection.transaction::<_, anyhow::Error, _>(|connection| {
-            Self::ensure_default_accounts_in_connection(connection, user_id)?;
+            Self::ensure_asset_account_in_connection(connection, user_id, destination_symbol)?;
             let updated = sql_query(
                 "UPDATE asset_balances \
                  SET available = available - ?, reserved = reserved + ? \
@@ -357,13 +378,36 @@ mod tests {
         drop(connection);
 
         let ledger = AssetLedger::new(db_manager);
+        for user_id in [1, 2] {
+            for asset in ["USD", "BTC", "ETH"] {
+                ledger
+                    .add_funds(user_id, asset, 50.0)
+                    .expect("test account should be funded");
+            }
+        }
         ledger
-            .ensure_default_accounts(1)
-            .expect("user one accounts should be initialized");
-        ledger
-            .ensure_default_accounts(2)
-            .expect("user two accounts should be initialized");
-        ledger
+    }
+
+    #[test]
+    fn add_funds_creates_and_credits_an_account() {
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        let pool = Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("sqlite pool should build for tests");
+        let db_manager = Arc::new(DBManager::new(pool));
+        let mut connection = db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
+        drop(connection);
+
+        let ledger = AssetLedger::new(db_manager);
+        assert_eq!(ledger.balance(7, "USD").unwrap(), None);
+        assert_eq!(ledger.add_funds(7, "USD", 12.5).unwrap(), 12.5);
+        assert_eq!(ledger.add_funds(7, "USD", 7.5).unwrap(), 20.0);
+        assert_eq!(ledger.balance(7, "USD").unwrap(), Some((20.0, 0.0)));
     }
 
     #[test]

@@ -8,8 +8,9 @@ use std::{
 
 use anyhow::anyhow;
 use rust_models::common::{
-    create_trade_response::CreateTradeStatus, delete_trade_response::DeleteTradeStatus,
-    get_trade_response::GetTradeStatus, trade_request::TradeType, trade_service_server::*,
+    add_funds_response::AddFundsStatus, create_trade_response::CreateTradeStatus,
+    delete_trade_response::DeleteTradeStatus, get_trade_response::GetTradeStatus,
+    trade_request::TradeType, trade_service_server::*, AddFundsRequest, AddFundsResponse,
     CreateTradeRequest, CreateTradeResponse, DeleteTradeRequest, DeleteTradeResponse,
     GetTradeRequest, GetTradeResponse, GetWalletBalanceRequest, GetWalletBalanceResponse, TradeId,
     TradeRequest,
@@ -303,11 +304,6 @@ impl TradeService for TradeServiceImpl {
                 "Reserving source assets for trade"
             );
             self.asset_ledger
-                .ensure_default_accounts(user_id)
-                .map_err(|err| {
-                    Status::internal(format!("Failed to initialize user assets: {err}"))
-                })?;
-            self.asset_ledger
                 .reserve_order(
                     trade_id,
                     user_id,
@@ -490,9 +486,6 @@ impl TradeService for TradeServiceImpl {
         let user_id = user.id.ok_or_else(|| Status::internal("User id missing"))?;
         let wallet_request = request.into_inner();
 
-        self.asset_ledger
-            .ensure_default_accounts(user_id)
-            .map_err(|err| Status::internal(format!("Failed to initialize user assets: {err}")))?;
         let balance = self
             .asset_ledger
             .balance(user_id, &wallet_request.symbol)
@@ -515,6 +508,63 @@ impl TradeService for TradeServiceImpl {
             balance,
         }))
     }
+
+    async fn add_funds(
+        &self,
+        request: tonic::Request<AddFundsRequest>,
+    ) -> Result<tonic::Response<AddFundsResponse>, tonic::Status> {
+        let user = request
+            .extensions()
+            .get::<User>()
+            .ok_or_else(|| Status::not_found("User not found"))?;
+        let user_id = user.id.ok_or_else(|| Status::internal("User id missing"))?;
+        let funding_request = request.into_inner();
+
+        if funding_request.symbol.trim().is_empty()
+            || !funding_request.amount.is_finite()
+            || funding_request.amount <= 0.0
+        {
+            return Ok(tonic::Response::new(AddFundsResponse {
+                status: AddFundsStatus::InvalidAmount.into(),
+                request: Some(funding_request),
+                balance: 0.0,
+            }));
+        }
+
+        match self
+            .asset_ledger
+            .add_funds(user_id, &funding_request.symbol, funding_request.amount)
+        {
+            Ok(balance) => {
+                info!(
+                    user_id,
+                    symbol = %funding_request.symbol,
+                    amount = funding_request.amount,
+                    balance,
+                    "Added funds to account"
+                );
+                Ok(tonic::Response::new(AddFundsResponse {
+                    status: AddFundsStatus::Ok.into(),
+                    request: Some(funding_request),
+                    balance,
+                }))
+            }
+            Err(err) => {
+                warn!(
+                    user_id,
+                    symbol = %funding_request.symbol,
+                    amount = funding_request.amount,
+                    error = %err,
+                    "Failed to add funds to account"
+                );
+                Ok(tonic::Response::new(AddFundsResponse {
+                    status: AddFundsStatus::InternalError.into(),
+                    request: Some(funding_request),
+                    balance: 0.0,
+                }))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -523,7 +573,7 @@ mod tests {
     use diesel::{r2d2::ConnectionManager, sqlite::SqliteConnection};
     use rust_models::common::{
         trade_request::{TradeType, TransactionType},
-        CreateTradeRequest, TradeRequest,
+        AddFundsRequest, CreateTradeRequest, TradeRequest,
     };
 
     use crate::{
@@ -688,6 +738,9 @@ mod tests {
         drop(connection);
 
         let ledger = AssetLedger::new(dependencies.db_manager.clone());
+        ledger
+            .add_funds(42, "USD", 50.0)
+            .expect("test trader should be funded");
         let mut trade_backend = TradeBackend::new();
         trade_backend.add_market(Market::new("USD", "BTC"));
         let service = TradeServiceImpl::new(
@@ -772,18 +825,30 @@ mod tests {
             UserTradeSubmissionGuard::default(),
         )
         .expect("trade service should initialize");
+        let user = crate::db::models::user::User {
+            id: Some(73),
+            email: "user-73@example.com".to_string(),
+            password: "pw".to_string(),
+            first_name: "first".to_string(),
+            last_name: "last".to_string(),
+        };
+        let mut add_funds_request = tonic::Request::new(AddFundsRequest {
+            symbol: "USD".to_string(),
+            amount: 12.5,
+        });
+        add_funds_request.extensions_mut().insert(user.clone());
+        let funded = service
+            .add_funds(add_funds_request)
+            .await
+            .expect("funding request should succeed")
+            .into_inner();
+        assert_eq!(funded.status, AddFundsStatus::Ok as i32);
+        assert_eq!(funded.balance, 12.5);
+
         let mut balance_request = tonic::Request::new(GetWalletBalanceRequest {
             symbol: "USD".to_string(),
         });
-        balance_request
-            .extensions_mut()
-            .insert(crate::db::models::user::User {
-                id: Some(73),
-                email: "user-73@example.com".to_string(),
-                password: "pw".to_string(),
-                first_name: "first".to_string(),
-                last_name: "last".to_string(),
-            });
+        balance_request.extensions_mut().insert(user.clone());
 
         let balance = service
             .get_wallet_balance(balance_request)
@@ -795,7 +860,7 @@ mod tests {
             balance.status,
             rust_models::common::get_wallet_balance_response::GetWalletBalanceStatus::Ok as i32
         );
-        assert_eq!(balance.balance, 50.0);
+        assert_eq!(balance.balance, 12.5);
         assert_eq!(
             balance.request.expect("request should be echoed").symbol,
             "USD"
@@ -804,15 +869,7 @@ mod tests {
         let mut missing_request = tonic::Request::new(GetWalletBalanceRequest {
             symbol: "DOGE".to_string(),
         });
-        missing_request
-            .extensions_mut()
-            .insert(crate::db::models::user::User {
-                id: Some(73),
-                email: "user-73@example.com".to_string(),
-                password: "pw".to_string(),
-                first_name: "first".to_string(),
-                last_name: "last".to_string(),
-            });
+        missing_request.extensions_mut().insert(user.clone());
 
         let missing = service
             .get_wallet_balance(missing_request)
@@ -825,6 +882,18 @@ mod tests {
                 as i32
         );
         assert_eq!(missing.balance, 0.0);
+
+        let mut invalid_funding_request = tonic::Request::new(AddFundsRequest {
+            symbol: "USD".to_string(),
+            amount: 0.0,
+        });
+        invalid_funding_request.extensions_mut().insert(user);
+        let invalid = service
+            .add_funds(invalid_funding_request)
+            .await
+            .expect("invalid funding should return a response status")
+            .into_inner();
+        assert_eq!(invalid.status, AddFundsStatus::InvalidAmount as i32);
     }
 
     #[tokio::test]
@@ -859,6 +928,13 @@ mod tests {
             .expect("sqlite connection should be available");
         AssetLedger::initialize_database(&mut connection).expect("ledger schema should initialize");
         drop(connection);
+        let ledger = AssetLedger::new(dependencies.db_manager.clone());
+        ledger
+            .add_funds(17, "USD", 1.0)
+            .expect("first trader should be funded");
+        ledger
+            .add_funds(18, "ETH", 2.0)
+            .expect("second trader should be funded");
 
         let mut trade_backend = TradeBackend::new();
         trade_backend.add_market(Market::new("USD", "BTC"));

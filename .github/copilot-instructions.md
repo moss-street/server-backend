@@ -31,10 +31,11 @@ USD/BTC and USD/ETH are registered. `Market` wraps `TradeEngine`, which applies
 reciprocal-price matching and price-time priority. `AssetLedger` persists
 `available`/`reserved` balances and order reservations in SQLite.
 
-`CreateUser` must atomically create its USD, BTC, and ETH asset balances.
-`reserve_order` also idempotently ensures those default accounts so legacy or
-partially initialized users can trade. Account, auth, reservation, submission,
-and cancellation lifecycle events must remain logged with `tracing`.
+New users start without funded assets. `AddFunds` is the only operation that
+credits available balances; it creates the requested asset account if needed.
+Trade reservation creates a zero-balance destination account only when needed
+for settlement. Account funding, auth, reservation, submission, and
+cancellation lifecycle events must remain logged with `tracing`.
 
 `TradeStateStore` and order books are intentionally in memory today, so active
 orders and trade lookup state are lost after restart. Startup refunds their

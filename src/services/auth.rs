@@ -12,7 +12,6 @@ use crate::{
     http::dependencies::ServerDependencies,
     passwords::Password,
     session::manager::SessionManagerImpl,
-    trading::ledger::AssetLedger,
 };
 
 #[derive(Debug)]
@@ -62,10 +61,6 @@ impl AuthorizationService for AuthService {
                         let created_user = user::schema::users::table
                             .filter(user::schema::users::email.eq(&user.email))
                             .first::<user::User>(connection)?;
-                        let user_id = created_user
-                            .id
-                            .ok_or_else(|| anyhow::anyhow!("Created user id is missing"))?;
-                        AssetLedger::ensure_default_accounts_in_connection(connection, user_id)?;
                         Ok(created_user)
                     })
                     .map_err(|err| {
@@ -74,7 +69,7 @@ impl AuthorizationService for AuthService {
                 let user_id = created_user
                     .id
                     .ok_or_else(|| tonic::Status::internal("Created user id is missing"))?;
-                info!(user_id, "Created user and initialized asset accounts");
+                info!(user_id, "Created user");
                 Ok(tonic::Response::new(CreateUserResponse {
                     status: rust_models::common::create_user_response::Status::Ok.into(),
                     message: "User created".to_string(),
@@ -149,11 +144,9 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        db::manager::DBManager, session::manager::SessionManager, trading::ledger::AssetLedger,
-    };
+    use crate::{db::manager::DBManager, session::manager::SessionManager};
 
-    fn service() -> (AuthService, AssetLedger) {
+    fn service() -> AuthService {
         let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
         let pool = diesel::r2d2::Pool::builder()
             .max_size(1)
@@ -165,19 +158,15 @@ mod tests {
             .get()
             .expect("sqlite connection should be available");
         user::User::initialize_database(&mut connection).expect("user schema should initialize");
-        AssetLedger::initialize_database(&mut connection)
-            .expect("asset ledger schema should initialize");
-
-        let service = AuthService::new(ServerDependencies::new(
-            db_manager.clone(),
+        AuthService::new(ServerDependencies::new(
+            db_manager,
             Arc::new(SessionManager::default()),
-        ));
-        (service, AssetLedger::new(db_manager))
+        ))
     }
 
     #[tokio::test]
     async fn create_and_login_return_ok_statuses() {
-        let (service, ledger) = service();
+        let service = service();
         let create = service
             .create_user(Request::new(CreateUserRequest {
                 email: "trader@example.com".to_string(),
@@ -189,9 +178,6 @@ mod tests {
             .expect("user should be created")
             .into_inner();
         assert_eq!(create.status, CreateUserStatus::Ok as i32);
-        assert_eq!(ledger.balance(1, "USD").unwrap(), Some((50.0, 0.0)));
-        assert_eq!(ledger.balance(1, "BTC").unwrap(), Some((50.0, 0.0)));
-        assert_eq!(ledger.balance(1, "ETH").unwrap(), Some((50.0, 0.0)));
 
         let login = service
             .login_user(Request::new(LoginUserRequest {
