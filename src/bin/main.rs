@@ -13,6 +13,8 @@ use moss_street_libs::{
 };
 
 use diesel::r2d2::{ConnectionManager, Pool};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -32,9 +34,23 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,moss_street_libs=debug,backend=debug")),
+        )
+        .with_target(false)
+        .init();
 
-    let manager = ConnectionManager::new(args.database_uri);
+    let args = Args::parse();
+    info!(
+        database_uri = %args.database_uri,
+        ip = %args.ip,
+        port = args.port,
+        "Initializing backend database"
+    );
+
+    let manager = ConnectionManager::new(args.database_uri.clone());
     let pool = Pool::new(manager)?;
 
     let db_manager = Arc::new(DBManager::new(pool));
@@ -43,9 +59,9 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!("bad connection"));
     };
 
-    let _ = User::initialize_database(&mut connection);
-    let _ = Stock::initialize_database(&mut connection);
-    let _ = Wallet::initialize_database(&mut connection);
+    User::initialize_database(&mut connection)?;
+    Stock::initialize_database(&mut connection)?;
+    Wallet::initialize_database(&mut connection)?;
     AssetLedger::initialize_database(&mut connection)?;
 
     let session_manager = Arc::new(SessionManager::default());
@@ -54,6 +70,7 @@ async fn main() -> Result<()> {
 
     let ip = format!("{}:{}", args.ip, args.port);
     let addr = ip.parse()?;
+    info!(%addr, "Starting backend server");
 
     let server = Server::new(addr, dependencies).await;
     async move {

@@ -3,16 +3,16 @@ use rust_models::common::{
     LoginUserRequest, LoginUserResponse,
 };
 
+use diesel::{prelude::*, OptionalExtension};
 use tonic::Request;
+use tracing::{debug, info, warn};
 
 use crate::{
-    db::{
-        manager::DatabaseImpl,
-        models::user::{self, UserBuilder},
-    },
+    db::models::user::{self, UserBuilder},
     http::dependencies::ServerDependencies,
     passwords::Password,
     session::manager::SessionManagerImpl,
+    trading::ledger::AssetLedger,
 };
 
 #[derive(Debug)]
@@ -48,18 +48,40 @@ impl AuthorizationService for AuthService {
             .build()
         {
             Ok(user) => {
-                let user_write_result = self
+                let mut connection = self
                     .server_deps
                     .db_manager
-                    .insert_row(user::schema::users::table, &user)
-                    .map_err(|e| tonic::Status::internal(format!("Server Error: {e}")))?;
+                    .connection_pool
+                    .get()
+                    .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
+                let created_user = connection
+                    .transaction::<_, anyhow::Error, _>(|connection| {
+                        diesel::insert_into(user::schema::users::table)
+                            .values(&user)
+                            .execute(connection)?;
+                        let created_user = user::schema::users::table
+                            .filter(user::schema::users::email.eq(&user.email))
+                            .first::<user::User>(connection)?;
+                        let user_id = created_user
+                            .id
+                            .ok_or_else(|| anyhow::anyhow!("Created user id is missing"))?;
+                        AssetLedger::ensure_default_accounts_in_connection(connection, user_id)?;
+                        Ok(created_user)
+                    })
+                    .map_err(|err| {
+                        tonic::Status::internal(format!("Failed to create user accounts: {err:#}"))
+                    })?;
+                let user_id = created_user
+                    .id
+                    .ok_or_else(|| tonic::Status::internal("Created user id is missing"))?;
+                info!(user_id, "Created user and initialized asset accounts");
                 Ok(tonic::Response::new(CreateUserResponse {
-                    status: 1,
-                    message: format!("{:#?}", user_write_result),
+                    status: rust_models::common::create_user_response::Status::Ok.into(),
+                    message: "User created".to_string(),
                 }))
             }
             Err(e) => Ok(tonic::Response::new(CreateUserResponse {
-                status: 0,
+                status: rust_models::common::create_user_response::Status::Error.into(),
                 message: format!("Failed to create user with error: {e:#}"),
             })),
         }
@@ -71,17 +93,23 @@ impl AuthorizationService for AuthService {
     ) -> Result<tonic::Response<LoginUserResponse>, tonic::Status> {
         let request = request.get_ref();
 
-        let user: Vec<crate::db::models::user::User> = self
+        let mut connection = self
             .server_deps
             .db_manager
-            .query_rows(user::schema::users::table, vec![("email", &request.email)])
-            .await
+            .connection_pool
+            .get()
+            .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
+        let user = user::schema::users::table
+            .filter(user::schema::users::email.eq(&request.email))
+            .first::<user::User>(&mut connection)
+            .optional()
             .map_err(|e| tonic::Status::internal(format!("Server Error: {e:#}")))?;
 
-        if let Some(user) = user.first() {
+        if let Some(user) = user {
             if !user.verify_password(&request.password).map_err(|e| {
                 tonic::Status::invalid_argument(format!("Interal Error occured {e}"))
             })? {
+                warn!("Rejected login with invalid password");
                 return Err(tonic::Status::invalid_argument(
                     "Invalid Password".to_owned(),
                 ));
@@ -97,13 +125,83 @@ impl AuthorizationService for AuthService {
                         tonic::Status::not_found("Invalid token during generation".to_string())
                     })?,
             ));
+            debug!(user_id = user.id, "User login succeeded");
 
             Ok(tonic::Response::new(LoginUserResponse {
-                status: 1,
+                status: rust_models::common::login_user_response::Status::Ok.into(),
                 user: Some(proto_user),
             }))
         } else {
+            warn!("Rejected login for unknown user");
             Err(tonic::Status::internal("No user found".to_string()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use diesel::{r2d2::ConnectionManager, sqlite::SqliteConnection};
+    use rust_models::common::{
+        create_user_response::Status as CreateUserStatus,
+        login_user_response::Status as LoginUserStatus, CreateUserRequest, LoginUserRequest,
+    };
+
+    use super::*;
+    use crate::{
+        db::manager::DBManager, session::manager::SessionManager, trading::ledger::AssetLedger,
+    };
+
+    fn service() -> (AuthService, AssetLedger) {
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        let pool = diesel::r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("sqlite pool should build for tests");
+        let db_manager = Arc::new(DBManager::new(pool));
+        let mut connection = db_manager
+            .connection_pool
+            .get()
+            .expect("sqlite connection should be available");
+        user::User::initialize_database(&mut connection).expect("user schema should initialize");
+        AssetLedger::initialize_database(&mut connection)
+            .expect("asset ledger schema should initialize");
+
+        let service = AuthService::new(ServerDependencies::new(
+            db_manager.clone(),
+            Arc::new(SessionManager::default()),
+        ));
+        (service, AssetLedger::new(db_manager))
+    }
+
+    #[tokio::test]
+    async fn create_and_login_return_ok_statuses() {
+        let (service, ledger) = service();
+        let create = service
+            .create_user(Request::new(CreateUserRequest {
+                email: "trader@example.com".to_string(),
+                password: "correct-horse-battery-staple".to_string(),
+                first_name: "Trade".to_string(),
+                last_name: "Tester".to_string(),
+            }))
+            .await
+            .expect("user should be created")
+            .into_inner();
+        assert_eq!(create.status, CreateUserStatus::Ok as i32);
+        assert_eq!(ledger.balance(1, "USD").unwrap(), Some((50.0, 0.0)));
+        assert_eq!(ledger.balance(1, "BTC").unwrap(), Some((50.0, 0.0)));
+        assert_eq!(ledger.balance(1, "ETH").unwrap(), Some((50.0, 0.0)));
+
+        let login = service
+            .login_user(Request::new(LoginUserRequest {
+                email: "trader@example.com".to_string(),
+                password: "correct-horse-battery-staple".to_string(),
+            }))
+            .await
+            .expect("user should be able to log in")
+            .into_inner();
+        assert_eq!(login.status, LoginUserStatus::Ok as i32);
+        assert!(login.user.and_then(|user| user.token).is_some());
     }
 }

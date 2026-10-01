@@ -16,6 +16,7 @@ use rust_models::common::{
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tonic::Status;
+use tracing::{debug, info, warn};
 
 use crate::{
     db::models::user::User,
@@ -256,7 +257,7 @@ impl TradeService for TradeServiceImpl {
             .acquire(user_id)
             .await
             .map_err(|err| {
-                eprintln!("Trade submission rejected for user {user_id}: {err}");
+                warn!(user_id, error = %err, "Trade submission rejected");
                 err
             })?;
 
@@ -280,6 +281,14 @@ impl TradeService for TradeServiceImpl {
                 })?;
 
             let trade_id = self.trade_state_store.allocate_trade_id();
+            debug!(
+                user_id,
+                trade_id,
+                source = %create_trade_request.symbol_source,
+                destination = %create_trade_request.symbol_dest,
+                quantity = create_trade_request.source_quantity,
+                "Reserving source assets for trade"
+            );
             self.asset_ledger
                 .ensure_default_accounts(user_id)
                 .map_err(|err| {
@@ -293,7 +302,17 @@ impl TradeService for TradeServiceImpl {
                     &create_trade_request.symbol_dest,
                     create_trade_request.source_quantity,
                 )
-                .map_err(|_| Status::failed_precondition("Insufficient source asset balance"))?;
+                .map_err(|err| {
+                    warn!(
+                        user_id,
+                        trade_id,
+                        source = %create_trade_request.symbol_source,
+                        quantity = create_trade_request.source_quantity,
+                        error = %err,
+                        "Unable to reserve source asset balance"
+                    );
+                    Status::failed_precondition("Insufficient source asset balance")
+                })?;
 
             let market_order = MarketOrder::new_with_order_id(
                 create_trade_request.clone(),
@@ -327,6 +346,13 @@ impl TradeService for TradeServiceImpl {
             self.trade_state_store
                 .insert(trade_id, user_id, create_trade_request.clone())
                 .await;
+            info!(
+                user_id,
+                trade_id,
+                fills = submission.fills.len(),
+                rests_on_book = submission.rests_on_book,
+                "Trade submitted"
+            );
 
             // package up user and swap pair and send it to the market for processing
             let response = CreateTradeResponse {
@@ -428,6 +454,14 @@ impl TradeService for TradeServiceImpl {
             },
             trade_id: Some(TradeId { trade_id }),
         };
+        if deleted {
+            info!(user_id, trade_id, "Trade cancelled");
+        } else {
+            debug!(
+                user_id,
+                trade_id, "Trade cancellation found no owned active trade"
+            );
+        }
 
         Ok(tonic::Response::new(response))
     }

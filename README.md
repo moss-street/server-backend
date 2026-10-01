@@ -13,3 +13,14 @@ This will enforce both clippy and cargo formatting are correct.
 To fix clippy errors you will need to change the code manually based on the suggestions.
 To fix formatting errors those can be fixed with `cargo +nightly fmt`.
 If you have not installed the nightly toolchain, do so by `rustup install nightly`.
+
+## Logging
+
+The server logs startup, account initialization, authentication, and trade
+lifecycle events. By default it emits application debug logs and dependency
+info logs. Override the filter with `RUST_LOG` when starting the server:
+
+```bash
+RUST_LOG='info,moss_street_libs=debug,backend=debug' \
+cargo run --bin backend -- --ip 127.0.0.1 --port 8080 --database-uri local.db
+```

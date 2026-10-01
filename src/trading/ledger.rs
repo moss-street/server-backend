@@ -78,18 +78,25 @@ impl AssetLedger {
     pub fn ensure_default_accounts(&self, user_id: i32) -> Result<()> {
         let mut connection = self.db_manager.connection_pool.get()?;
         connection.transaction::<_, anyhow::Error, _>(|connection| {
-            for asset in DEFAULT_ASSETS {
-                sql_query(
-                    "INSERT OR IGNORE INTO asset_balances \
-                     (user_id, asset_symbol, available, reserved) VALUES (?, ?, ?, 0)",
-                )
-                .bind::<Integer, _>(user_id)
-                .bind::<Text, _>(asset)
-                .bind::<Double, _>(DEFAULT_BALANCE)
-                .execute(connection)?;
-            }
-            Ok(())
+            Self::ensure_default_accounts_in_connection(connection, user_id)
         })
+    }
+
+    pub fn ensure_default_accounts_in_connection(
+        connection: &mut SqliteConnection,
+        user_id: i32,
+    ) -> Result<()> {
+        for asset in DEFAULT_ASSETS {
+            sql_query(
+                "INSERT OR IGNORE INTO asset_balances \
+                 (user_id, asset_symbol, available, reserved) VALUES (?, ?, ?, 0)",
+            )
+            .bind::<Integer, _>(user_id)
+            .bind::<Text, _>(asset)
+            .bind::<Double, _>(DEFAULT_BALANCE)
+            .execute(connection)?;
+        }
+        Ok(())
     }
 
     pub fn reserve_order(
@@ -102,6 +109,7 @@ impl AssetLedger {
     ) -> Result<()> {
         let mut connection = self.db_manager.connection_pool.get()?;
         connection.transaction::<_, anyhow::Error, _>(|connection| {
+            Self::ensure_default_accounts_in_connection(connection, user_id)?;
             let updated = sql_query(
                 "UPDATE asset_balances \
                  SET available = available - ?, reserved = reserved + ? \
